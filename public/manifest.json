@@ -1,0 +1,16 @@
+{
+  "short_name": "MI Nurul Falah",
+  "name": "NILAI SISWA – MI NURUL FALAH",
+  "icons": [
+    {
+      "src": "/assets/aistudio/WhatsApp_Image_2026-11-09_at_08.49.13_96750bdd.jpeg",
+      "type": "image/jpeg",
+      "sizes": "192x192 512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#064e3b",
+  "theme_color": "#047857",
+  "display": "standalone",
+  "orientation": "portrait"
+}

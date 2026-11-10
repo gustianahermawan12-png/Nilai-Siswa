@@ -1,0 +1,6 @@
+{
+  "name": "NILAI SISWA – MI NURUL FALAH",
+  "description": "Aplikasi penilaian akademik, tabungan, infak, absensi, iuran tambahan, jadwal pelajaran, dan komunikasi wali murid MI Nurul Falah.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
