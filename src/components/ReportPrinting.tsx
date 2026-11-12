@@ -19,10 +19,13 @@ import {
   Wallet,
   HeartHandshake,
   ClipboardList,
+  X,
+  ArrowLeft,
 } from 'lucide-react';
 
 interface ReportPrintingProps {
   currentUser: User;
+  onClose?: () => void;
 }
 
 export type ReportType =
@@ -34,7 +37,7 @@ export type ReportType =
   | 'iuran'
   | 'data_siswa';
 
-export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser }) => {
+export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onClose }) => {
   const db = dbService.getSnapshot();
   const isAdmin = currentUser.role === 'admin';
   const students = db.students;
@@ -93,14 +96,28 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser }) =
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950"
-          >
-            <Printer className="w-4 h-4 text-amber-300" />
-            <span>CETAK / SIMPAN PDF SEKARANG</span>
-          </button>
+          <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 border border-red-200 cursor-pointer"
+                title="Tutup halaman cetak dan kembali ke dasbor"
+              >
+                <X className="w-4 h-4 text-red-600" />
+                <span>Tutup Cetak</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handlePrint}
+              className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950 cursor-pointer"
+            >
+              <Printer className="w-4 h-4 text-amber-300" />
+              <span>CETAK / SIMPAN PDF SEKARANG</span>
+            </button>
+          </div>
         </div>
 
         {/* Report Type Selectors */}
@@ -727,6 +744,30 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser }) =
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Floating Bottom Quick Print & Close Bar (Hidden during @media print) */}
+      <div className="print:hidden fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-emerald-950/95 text-white p-2.5 rounded-2xl shadow-2xl border-2 border-amber-400 backdrop-blur-md animate-in fade-in slide-in-from-bottom-4">
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+            title="Tutup halaman cetak dan kembali ke dasbor"
+          >
+            <X className="w-4 h-4" />
+            <span>Tutup Print</span>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handlePrint}
+          className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+          title="Buka dialog cetak browser atau simpan PDF"
+        >
+          <Printer className="w-4 h-4" />
+          <span>Cetak Dokumen Ini</span>
+        </button>
       </div>
     </div>
   );

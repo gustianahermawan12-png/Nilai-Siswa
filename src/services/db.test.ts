@@ -60,3 +60,36 @@ test('Student deletion removes student and unlinks wali murid', () => {
   assert.equal(deleted, true);
   assert.ok(!dbService.getStudents().some((s) => s.id === createdId));
 });
+
+test('checkUsernameAvailable prevents duplicate usernames', () => {
+  const adminUser = dbService.getUsers().find((u) => u.username === 'admin');
+  assert.ok(adminUser);
+
+  // 'admin' is taken for another user ID
+  assert.equal(dbService.checkUsernameAvailable('admin', 'different-user-id'), false);
+  // Case-insensitive duplicate check
+  assert.equal(dbService.checkUsernameAvailable('ADMIN', 'different-user-id'), false);
+  // Allowed if checking own user ID
+  assert.equal(dbService.checkUsernameAvailable('admin', adminUser.id), true);
+  // Free unique username
+  assert.equal(dbService.checkUsernameAvailable('username_baru_bebas_123'), true);
+});
+
+test('toggleUserStatus switches user status between aktif and nonaktif', () => {
+  const users = dbService.getUsers();
+  const testUser = users.find((u) => u.role === 'wali_murid') || users[0];
+  const initialStatus = testUser.status || 'aktif';
+
+  const res1 = dbService.toggleUserStatus(testUser.id);
+  assert.equal(res1, true);
+  const expectedNext = initialStatus === 'aktif' ? 'nonaktif' : 'aktif';
+  const updatedUser1 = dbService.getUsers().find((u) => u.id === testUser.id);
+  assert.equal(updatedUser1?.status, expectedNext);
+
+  // Toggle back
+  const res2 = dbService.toggleUserStatus(testUser.id);
+  assert.equal(res2, true);
+  const updatedUser2 = dbService.getUsers().find((u) => u.id === testUser.id);
+  assert.equal(updatedUser2?.status, initialStatus);
+});
+

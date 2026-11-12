@@ -12,6 +12,7 @@ export interface User {
   avatarUrl?: string;
   securityQuestion?: string;
   securityAnswer?: string;
+  status?: 'aktif' | 'nonaktif';
   createdAt: string;
 }
 

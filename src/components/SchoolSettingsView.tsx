@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SchoolSettings, User } from '../types';
 import { dbService } from '../services/db';
+import { hashPassword } from '../utils/security';
 import {
   Settings,
   Save,
@@ -10,21 +11,82 @@ import {
   Award,
   AlertTriangle,
   RotateCcw,
+  UserCheck,
+  Key,
+  AtSign,
+  Eye,
+  EyeOff,
+  ShieldCheck,
+  Shield,
+  X,
 } from 'lucide-react';
 
 interface SchoolSettingsViewProps {
   currentUser: User;
+  onClose?: () => void;
 }
 
-export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentUser }) => {
+export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentUser, onClose }) => {
   const db = dbService.getSnapshot();
   const [settings, setSettings] = useState<SchoolSettings>(db.settings);
   const [toastMsg, setToastMsg] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
+  // Admin credentials state
+  const [adminUsername, setAdminUsername] = useState(currentUser.username);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [showAdminPass, setShowAdminPass] = useState(false);
+  const [adminCredMsg, setAdminCredMsg] = useState('');
+  const [adminCredError, setAdminCredError] = useState('');
+  const [isSavingCreds, setIsSavingCreds] = useState(false);
+
   const showToast = (msg: string) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 3000);
+  };
+
+  const handleSaveAdminCredentials = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminCredMsg('');
+    setAdminCredError('');
+
+    const trimmedUsername = adminUsername.trim();
+    if (!trimmedUsername) {
+      setAdminCredError('Nama pengguna admin tidak boleh kosong.');
+      return;
+    }
+
+    if (trimmedUsername !== currentUser.username) {
+      const isAvail = dbService.checkUsernameAvailable(trimmedUsername, currentUser.id);
+      if (!isAvail) {
+        setAdminCredError(`Nama pengguna "${trimmedUsername}" sudah dipakai oleh akun lain.`);
+        return;
+      }
+    }
+
+    setIsSavingCreds(true);
+    try {
+      const updates: Partial<User> = {
+        username: trimmedUsername,
+      };
+      if (adminPassword.trim()) {
+        if (adminPassword.trim().length < 6) {
+          setAdminCredError('Kata sandi baru minimal 6 karakter.');
+          setIsSavingCreds(false);
+          return;
+        }
+        updates.password = await hashPassword(adminPassword.trim());
+      }
+
+      dbService.updateUser(currentUser.id, updates);
+      setAdminPassword('');
+      setAdminCredMsg('Kredensial login admin berhasil diperbarui dan tersimpan ke Cloud Database!');
+      showToast('Kredensial admin berhasil disimpan!');
+    } catch (err: any) {
+      setAdminCredError(err?.message || 'Gagal menyimpan kredensial admin.');
+    } finally {
+      setIsSavingCreds(false);
+    }
   };
 
   const handleSaveSettings = (e: React.FormEvent) => {
@@ -62,14 +124,129 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSaveSettings}
-          className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950"
-        >
-          <Save className="w-4 h-4 text-amber-300" />
-          <span>Simpan Semua Pengaturan</span>
-        </button>
+        <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 border border-red-200 cursor-pointer"
+              title="Tutup pengaturan dan kembali ke dasbor"
+            >
+              <X className="w-4 h-4 text-red-600" />
+              <span>Tutup Pengaturan</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleSaveSettings}
+            className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950 cursor-pointer"
+          >
+            <Save className="w-4 h-4 text-amber-300" />
+            <span>Simpan Semua Pengaturan</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Kredensial Login Administrator / Guru */}
+      <div className="bg-linear-to-br from-emerald-900 to-emerald-950 text-white rounded-3xl p-6 shadow-md border-2 border-amber-400/40 relative overflow-hidden">
+        <div className="relative z-10">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-emerald-800/80 pb-4 mb-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-400 text-emerald-950 flex items-center justify-center font-black shadow-md">
+                <Shield className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-base text-amber-300 tracking-tight flex items-center gap-2">
+                  <span>Kredensial Login Administrator / Guru</span>
+                  <span className="text-[10px] bg-emerald-800 text-emerald-200 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider border border-emerald-700">
+                    Akun Utama
+                  </span>
+                </h3>
+                <p className="text-xs text-emerald-200/90 mt-0.5">
+                  Atur nama pengguna dan kata sandi kustom untuk login Admin/Guru. Perubahan langsung tersimpan ke Cloud Database.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300 bg-emerald-800/50 px-3 py-1.5 rounded-xl border border-emerald-700/50">
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-300" />
+              <span>Enkripsi SHA-256 Aktif</span>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveAdminCredentials} className="space-y-4">
+            {adminCredMsg && (
+              <div className="p-3 bg-emerald-800/90 border border-emerald-600 rounded-xl text-xs text-emerald-100 flex items-center gap-2">
+                <Check className="w-4 h-4 text-amber-300 shrink-0" />
+                <span>{adminCredMsg}</span>
+              </div>
+            )}
+
+            {adminCredError && (
+              <div className="p-3 bg-red-900/80 border border-red-500 rounded-xl text-xs text-red-200 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-300 shrink-0" />
+                <span>{adminCredError}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-amber-200 mb-1.5 flex items-center gap-1.5">
+                  <AtSign className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Nama Pengguna (Username) Admin</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  placeholder="Contoh: admin atau gurunurulfalah"
+                  className="w-full px-3.5 py-2.5 text-xs bg-emerald-950/80 border border-emerald-700 focus:border-amber-400 text-white rounded-xl focus:ring-2 focus:ring-amber-400 outline-none font-bold"
+                />
+                <p className="text-[10px] text-emerald-300/80 mt-1">
+                  Digunakan untuk login di semua perangkat (HP, iPhone, Laptop, PC).
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-amber-200 mb-1.5 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-amber-300" />
+                  <span>Kata Sandi Baru (Password)</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showAdminPass ? 'text' : 'password'}
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Kosongkan jika tidak diubah (min. 6 karakter)"
+                    className="w-full px-3.5 py-2.5 text-xs bg-emerald-950/80 border border-emerald-700 focus:border-amber-400 text-white rounded-xl focus:ring-2 focus:ring-amber-400 outline-none pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminPass(!showAdminPass)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400 hover:text-white"
+                  >
+                    {showAdminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[10px] text-emerald-300/80 mt-1">
+                  Akan dienkripsi otomatis secara aman sebelum disimpan ke database online.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-1">
+              <button
+                type="submit"
+                disabled={isSavingCreds}
+                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 flex items-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{isSavingCreds ? 'Menyimpan...' : 'Perbarui Kredensial Admin'}</span>
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
 
       <form onSubmit={handleSaveSettings} className="space-y-6">

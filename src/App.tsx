@@ -63,30 +63,22 @@ export default function App() {
     return () => unsub();
   }, [currentUser]);
 
-  // Handle URL query parameters (e.g. ?autostart=1 or ?role=wali)
+  // Restore user session securely across browser tabs and reloads
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const autostart = params.get('autostart');
-      const roleParam = params.get('role');
+      // Check stored session in localStorage (or fallback sessionStorage)
+      const storedUserId =
+        localStorage.getItem('minurulfalah_current_user_id') ||
+        sessionStorage.getItem('minurulfalah_current_user_id');
 
-      // Check stored session
-      const storedUserId = sessionStorage.getItem('minurulfalah_current_user_id');
       if (storedUserId) {
         const found = dbService.getUsers().find((u) => u.id === storedUserId);
-        if (found) {
+        if (found && found.status !== 'nonaktif') {
           setCurrentUser(found);
           return;
-        }
-      }
-
-      if (autostart === '1' || roleParam) {
-        if (roleParam === 'wali') {
-          const waliUser = dbService.getUsers().find((u) => u.role === 'wali_murid');
-          if (waliUser) handleLogin(waliUser);
         } else {
-          const adminUser = dbService.getUsers().find((u) => u.role === 'admin');
-          if (adminUser) handleLogin(adminUser);
+          localStorage.removeItem('minurulfalah_current_user_id');
+          sessionStorage.removeItem('minurulfalah_current_user_id');
         }
       }
     }
@@ -96,6 +88,7 @@ export default function App() {
     setCurrentUser(user);
     setActiveTab('dashboard');
     try {
+      localStorage.setItem('minurulfalah_current_user_id', user.id);
       sessionStorage.setItem('minurulfalah_current_user_id', user.id);
     } catch (e) {}
   };
@@ -103,6 +96,7 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     try {
+      localStorage.removeItem('minurulfalah_current_user_id');
       sessionStorage.removeItem('minurulfalah_current_user_id');
     } catch (e) {}
   };
@@ -210,7 +204,12 @@ export default function App() {
             <AnnouncementsManagement currentUser={currentUser} />
           )}
 
-          {activeTab === 'reports' && <ReportPrinting currentUser={currentUser} />}
+          {activeTab === 'reports' && (
+            <ReportPrinting
+              currentUser={currentUser}
+              onClose={() => setActiveTab('dashboard')}
+            />
+          )}
 
           {activeTab === 'workspace' && isAdmin && (
             <div className="space-y-4">
@@ -236,7 +235,10 @@ export default function App() {
           )}
 
           {activeTab === 'settings' && isAdmin && (
-            <SchoolSettingsView currentUser={currentUser} />
+            <SchoolSettingsView
+              currentUser={currentUser}
+              onClose={() => setActiveTab('dashboard')}
+            />
           )}
         </main>
       </div>

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../types';
+import { dbService, SyncStatus } from '../services/db';
 import {
   LogOut,
   User as UserIcon,
@@ -10,6 +11,9 @@ import {
   Menu,
   ShieldCheck,
   GraduationCap,
+  Wifi,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -30,6 +34,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   lastSavedText,
 }) => {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => dbService.getSyncStatus());
+
+  useEffect(() => {
+    return dbService.subscribeSyncStatus((status) => {
+      setSyncStatus(status);
+    });
+  }, []);
 
   return (
     <>
@@ -71,13 +82,44 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Right Controls & Profile */}
             <div className="flex items-center gap-2 sm:gap-4">
-              {/* Auto-save status badge */}
+              {/* Cloud Firestore Online Sync status badge */}
               <div
-                className="hidden md:flex items-center gap-1.5 text-xs bg-emerald-900/80 text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-700/60"
-                title="Data otomatis tersimpan ke penyimpanan lokal"
+                className={`hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                  syncStatus === 'connected'
+                    ? 'bg-emerald-950/80 text-emerald-200 border-emerald-600/70'
+                    : syncStatus === 'syncing'
+                    ? 'bg-amber-950/80 text-amber-200 border-amber-500/70'
+                    : syncStatus === 'offline'
+                    ? 'bg-gray-800/80 text-gray-300 border-gray-600'
+                    : 'bg-red-950/80 text-red-200 border-red-500'
+                }`}
+                title="Status sinkronisasi data online Firestore dengan seluruh perangkat (HP, iPhone, Laptop)"
               >
-                <CheckCircle2 className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
-                <span className="font-medium text-[11px]">{lastSavedText || 'Tersimpan Otomatis'}</span>
+                {syncStatus === 'connected' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <Wifi className="w-3.5 h-3.5 text-emerald-300" />
+                    <span className="font-semibold text-[11px]">Database Cloud: Terhubung</span>
+                  </>
+                )}
+                {syncStatus === 'syncing' && (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+                    <span className="font-semibold text-[11px]">Menyinkronkan ke Cloud...</span>
+                  </>
+                )}
+                {syncStatus === 'offline' && (
+                  <>
+                    <WifiOff className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="font-medium text-[11px]">Offline (Penyimpanan Lokal)</span>
+                  </>
+                )}
+                {syncStatus === 'error' && (
+                  <>
+                    <span className="w-2 h-2 rounded-full bg-red-400" />
+                    <span className="font-semibold text-[11px]">Koneksi Cloud Terputus</span>
+                  </>
+                )}
               </div>
 
               {/* Google Workspace Cloud Sync button (Admin only) */}

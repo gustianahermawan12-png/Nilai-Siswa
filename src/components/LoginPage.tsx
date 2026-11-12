@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { dbService } from '../services/db';
+import { verifyPassword, hashPassword } from '../utils/security';
 import {
   Lock,
   User as UserIcon,
@@ -14,6 +15,7 @@ import {
   HelpCircle,
   CheckCircle,
   AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -25,6 +27,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [isForgotOpen, setIsForgotOpen] = useState(false);
 
   // Forgot password states
@@ -35,30 +38,39 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [forgotSuccess, setForgotSuccess] = useState('');
   const [forgotError, setForgotError] = useState('');
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setIsLoading(true);
 
-    const users = dbService.getUsers();
-    const cleanUsername = username.trim().toLowerCase();
-    const user = users.find(
-      (u) => u.username.toLowerCase() === cleanUsername && u.password === password.trim()
-    );
+    try {
+      const users = dbService.getUsers();
+      const cleanUsername = username.trim().toLowerCase();
+      const user = users.find((u) => u.username.toLowerCase() === cleanUsername);
 
-    if (user) {
-      onLoginSuccess(user);
-    } else {
-      setErrorMsg('Nama pengguna atau kata sandi tidak sesuai. Silakan periksa kembali!');
-    }
-  };
+      if (!user) {
+        setErrorMsg('Nama pengguna tidak terdaftar di sistem madrasah.');
+        setIsLoading(false);
+        return;
+      }
 
-  const handleQuickLogin = (uname: string, pass: string) => {
-    setUsername(uname);
-    setPassword(pass);
-    const users = dbService.getUsers();
-    const user = users.find((u) => u.username === uname && u.password === pass);
-    if (user) {
-      onLoginSuccess(user);
+      if (user.status === 'nonaktif') {
+        setErrorMsg('Akun ini sedang dinonaktifkan oleh Administrator Madrasah. Silakan hubungi pihak madrasah.');
+        setIsLoading(false);
+        return;
+      }
+
+      const isMatch = await verifyPassword(password.trim(), user.password);
+      if (isMatch) {
+        onLoginSuccess(user);
+      } else {
+        setErrorMsg('Kata sandi yang Anda masukkan salah. Silakan periksa kembali!');
+      }
+    } catch (err) {
+      console.error('Authentication error:', err);
+      setErrorMsg('Gagal memproses autentikasi. Silakan periksa koneksi internet Anda.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -75,7 +87,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleResetPassword = (e: React.FormEvent) => {
+  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!foundUser) return;
 
@@ -91,7 +103,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       return;
     }
 
-    dbService.updateUser(foundUser.id, { password: newPassword.trim() });
+    const hashed = await hashPassword(newPassword.trim());
+    dbService.updateUser(foundUser.id, { password: hashed });
     setForgotSuccess('Kata sandi berhasil diperbarui! Silakan masuk dengan kata sandi baru.');
     setTimeout(() => {
       setIsForgotOpen(false);
@@ -207,44 +220,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
             <button
               type="submit"
-              className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-bold rounded-xl shadow-lg shadow-emerald-700/30 transition-all flex items-center justify-center gap-2 text-sm sm:text-base border-b-2 border-emerald-900 focus:outline-none focus:ring-2 focus:ring-amber-300"
+              disabled={isLoading}
+              className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-70 active:scale-[0.99] text-white font-bold rounded-xl shadow-lg shadow-emerald-700/30 transition-all flex items-center justify-center gap-2 text-sm sm:text-base border-b-2 border-emerald-900 focus:outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer"
             >
-              <LogIn className="w-5 h-5 text-amber-300" />
-              <span>Masuk ke Aplikasi</span>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-5 h-5 text-amber-300 animate-spin" />
+                  <span>Memeriksa Akun...</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-5 h-5 text-amber-300" />
+                  <span>Masuk ke Aplikasi</span>
+                </>
+              )}
             </button>
           </form>
 
-          {/* Quick Demo Logins for instant evaluation */}
-          <div className="pt-2 border-t border-gray-100">
-            <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider text-center mb-2 flex items-center justify-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              Uji Coba Cepat (Akun Bawaan)
+          {/* Official Portal Notice */}
+          <div className="pt-3 border-t border-gray-100 text-center">
+            <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
+              Silakan masuk menggunakan nama pengguna dan kata sandi yang telah didaftarkan oleh administrator atau wali kelas madrasah.
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('admin', 'admin123')}
-                className="p-2.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl text-left transition-colors text-xs group"
-              >
-                <div className="flex items-center gap-1.5 font-bold text-emerald-900 mb-0.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>Guru / Admin</span>
-                </div>
-                <div className="text-[11px] text-emerald-700 font-mono">admin / admin123</div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('wali_ahmad', 'wali123')}
-                className="p-2.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl text-left transition-colors text-xs group"
-              >
-                <div className="flex items-center gap-1.5 font-bold text-amber-950 mb-0.5">
-                  <GraduationCap className="w-3.5 h-3.5 text-amber-700" />
-                  <span>Wali Murid</span>
-                </div>
-                <div className="text-[11px] text-amber-800 font-mono">wali_ahmad / wali123</div>
-              </button>
-            </div>
           </div>
         </div>
 
@@ -256,8 +253,18 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       {/* Forgot Password Modal */}
       {isForgotOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border-t-4 border-amber-400">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setIsForgotOpen(false);
+              setFoundUser(null);
+              setForgotError('');
+              setForgotSuccess('');
+            }
+          }}
+        >
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border-t-4 border-amber-400 max-h-[90dvh] overflow-y-auto my-auto animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-amber-600" />

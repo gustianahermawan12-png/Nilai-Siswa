@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Student } from '../types';
 import { dbService } from '../services/db';
+import { hashPassword } from '../utils/security';
 import {
   UserCheck,
   Plus,
@@ -10,12 +11,16 @@ import {
   Edit2,
   Trash2,
   ShieldCheck,
+  ShieldAlert,
   Search,
   Share2,
   Lock,
   Sparkles,
   AlertCircle,
   HelpCircle,
+  ToggleLeft,
+  ToggleRight,
+  Power,
 } from 'lucide-react';
 
 interface WaliMuridAccountsProps {
@@ -78,7 +83,7 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
     setIsModalOpen(true);
   };
 
-  const handleSaveAccount = (e: React.FormEvent) => {
+  const handleSaveAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password.trim()) {
       showToast('Nama pengguna dan kata sandi wajib diisi!');
@@ -86,6 +91,9 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
     }
 
     const cleanUsername = username.trim().toLowerCase();
+    const hashedPassword = password.startsWith('sha256:')
+      ? password
+      : await hashPassword(password.trim());
 
     // Check duplicate username if adding new
     if (!editingUser) {
@@ -97,7 +105,7 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
 
       const newUser = dbService.addUser({
         username: cleanUsername,
-        password: password.trim(),
+        password: hashedPassword,
         role: 'wali_murid',
         name: parentName.trim() || 'Wali Murid',
         title: `Wali Murid - ${students.find((s) => s.id === targetStudentId)?.name || 'Siswa'}`,
@@ -105,6 +113,7 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
         phone: phone.trim(),
         securityQuestion,
         securityAnswer,
+        status: 'aktif',
       });
 
       // Update student's linked waliMuridId
@@ -112,7 +121,7 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
         dbService.updateStudent(targetStudentId, { waliMuridId: newUser.id });
       }
 
-      showToast(`Akun wali murid "${cleanUsername}" berhasil dibuat!`);
+      showToast(`Akun wali murid "${cleanUsername}" berhasil dibuat dan tersimpan ke cloud!`);
     } else {
       // Check duplicate username if username changed
       if (cleanUsername !== editingUser.username.toLowerCase()) {
@@ -127,7 +136,7 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
 
       dbService.updateUser(editingUser.id, {
         username: cleanUsername,
-        password: password.trim(),
+        password: hashedPassword,
         name: parentName.trim(),
         linkedStudentId: targetStudentId,
         phone: phone.trim(),
@@ -145,6 +154,12 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
     setIsModalOpen(false);
   };
 
+  const handleToggleStatus = (account: User) => {
+    dbService.toggleUserStatus(account.id);
+    const nextStatus = account.status === 'nonaktif' ? 'Aktif' : 'Nonaktif';
+    showToast(`Status akun "${account.username}" diubah menjadi: ${nextStatus.toUpperCase()}`);
+  };
+
   const handleDeleteConfirm = () => {
     if (!userToDelete) return;
     const name = userToDelete.name;
@@ -156,7 +171,10 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
   };
 
   const handleCopyCredentials = (user: User, stdName: string) => {
-    const text = `*PORTAL NILAI SISWA – MI NURUL FALAH*\n\nAssalamu'alaikum Wr. Wb.\nBapak/Ibu Wali Murid dari *${stdName}*, berikut akses login aplikasi:\n\n• Website: ${window.location.origin}\n• Username: *${user.username}*\n• Password: *${user.password}*\n\nSilakan masuk untuk melihat rapor, tabungan, absensi, dan infak ananda. Terima kasih.`;
+    const rawPass = user.password.startsWith('sha256:')
+      ? '(Gunakan kata sandi yang telah ditentukan madrasah)'
+      : user.password;
+    const text = `*PORTAL NILAI SISWA – MI NURUL FALAH*\n\nAssalamu'alaikum Wr. Wb.\nBapak/Ibu Wali Murid dari *${stdName}*, berikut akses login aplikasi:\n\n• Website: ${window.location.origin}\n• Username: *${user.username}*\n• Password: *${rawPass}*\n\nSilakan masuk untuk melihat rapor, tabungan, absensi, dan infak ananda. Terima kasih.`;
     navigator.clipboard.writeText(text);
     setCopiedId(user.id);
     showToast('Akses login disalin ke clipboard! Siap dikirim via WhatsApp.');
@@ -298,8 +316,11 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
                       </td>
                       <td className="py-3.5 px-4">
                         {account ? (
-                          <span className="font-mono font-bold text-amber-900 bg-amber-100/80 px-2 py-1 rounded-lg border border-amber-200">
-                            {account.password}
+                          <span
+                            className="font-mono font-bold text-amber-900 bg-amber-100/80 px-2 py-1 rounded-lg border border-amber-200"
+                            title={account.password.startsWith('sha256:') ? 'Kata sandi tersimpan secara terenkripsi aman' : 'Kata sandi akun'}
+                          >
+                            {account.password.startsWith('sha256:') ? '•••••••• (Aman)' : account.password}
                           </span>
                         ) : (
                           <span className="text-gray-400 italic">-</span>
@@ -307,10 +328,17 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
                       </td>
                       <td className="py-3.5 px-4">
                         {account ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
-                            <ShieldCheck className="w-3 h-3 text-green-600" />
-                            Aktif
-                          </span>
+                          account.status === 'nonaktif' ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-700 bg-gray-200 px-2 py-0.5 rounded-full">
+                              <ShieldAlert className="w-3 h-3 text-gray-500" />
+                              Nonaktif
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                              <ShieldCheck className="w-3 h-3 text-green-600" />
+                              Aktif
+                            </span>
+                          )
                         ) : (
                           <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
                             Perlu Akun
@@ -331,6 +359,18 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
                               ) : (
                                 <Copy className="w-4 h-4" />
                               )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStatus(account)}
+                              className={`p-1.5 rounded-lg transition-colors ${
+                                account.status === 'nonaktif'
+                                  ? 'text-amber-600 hover:bg-amber-100'
+                                  : 'text-gray-500 hover:bg-gray-100'
+                              }`}
+                              title={account.status === 'nonaktif' ? 'Aktifkan Akun' : 'Nonaktifkan Akun (Wali tidak dapat login)'}
+                            >
+                              <Power className="w-4 h-4" />
                             </button>
                             <button
                               type="button"
@@ -371,27 +411,34 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
 
       {/* Create / Edit Account Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border-t-4 border-emerald-700 max-h-[90dvh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 my-auto">
+            <div className="shrink-0 px-5 sm:px-6 py-3.5 sm:py-4 bg-emerald-800 text-white flex items-center justify-between border-b border-emerald-900 z-10">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
                 <KeyRound className="w-5 h-5 text-amber-300" />
                 <span>{editingUser ? 'Edit Akun Wali Murid' : 'Buat Akun Wali Murid'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="px-2 py-1 rounded-lg text-emerald-200 hover:text-white hover:bg-emerald-700 text-xs font-bold transition-colors border border-emerald-600/80 cursor-pointer"
+                title="Tutup (Esc)"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveAccount} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Hubungkan dengan Siswa <span className="text-red-500">*</span>
-                </label>
+            <form onSubmit={handleSaveAccount} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                    Hubungkan dengan Siswa <span className="text-red-500">*</span>
+                  </label>
                 <select
                   value={targetStudentId}
                   onChange={(e) => {
@@ -479,19 +526,21 @@ export const WaliMuridAccounts: React.FC<WaliMuridAccountsProps> = ({ initialStu
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              </div>
+
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2 z-10">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-amber-300" />
                   <span>{editingUser ? 'Simpan Perubahan' : 'Simpan Akun Wali'}</span>
                 </button>
               </div>

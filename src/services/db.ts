@@ -1,5 +1,6 @@
 import { AppDatabase, SchoolSettings, User, Student, ClassGroup, Subject, ScheduleItem, DailyGrade, SemesterGrade, SavingsTransaction, InfakPayment, AttendanceRecord, ExcuseLetter, FeeItem, FeePayment, Announcement } from '../types';
 import { calculateStatus, getDateRangeArray } from '../utils/gradeCalculations';
+import { firestore, doc, setDoc, onSnapshot, getDoc } from './firebase';
 
 const STORAGE_KEY = 'minurulfalah_db_v1';
 
@@ -28,6 +29,7 @@ const INITIAL_USERS: User[] = [
     avatarUrl: '/assets/aistudio/WhatsApp_Image_2026-11-09_at_08.49.13_96750bdd.jpeg',
     securityQuestion: 'Nama ibu kandung?',
     securityAnswer: 'Siti',
+    status: 'aktif',
     createdAt: '2024-07-01T08:00:00Z',
   },
   {
@@ -41,6 +43,7 @@ const INITIAL_USERS: User[] = [
     phone: '085711223344',
     securityQuestion: 'Makanan favorit?',
     securityAnswer: 'Nasi Goreng',
+    status: 'aktif',
     createdAt: '2024-07-10T08:00:00Z',
   },
   {
@@ -54,6 +57,7 @@ const INITIAL_USERS: User[] = [
     phone: '085788990011',
     securityQuestion: 'Kota kelahiran?',
     securityAnswer: 'Bandung',
+    status: 'aktif',
     createdAt: '2024-07-10T08:00:00Z',
   },
 ];
@@ -349,12 +353,71 @@ export function getInitialDatabase(): AppDatabase {
   };
 }
 
+export type SyncStatus = 'connected' | 'syncing' | 'offline' | 'error';
+
 class DatabaseService {
   private db: AppDatabase;
   private listeners: Set<() => void> = new Set();
+  private syncStatus: SyncStatus = 'connected';
+  private hasInitializedCloud = false;
+  private unsubscribeFirestore: (() => void) | null = null;
 
   constructor() {
     this.db = this.loadFromStorage();
+    if (typeof window !== 'undefined') {
+      this.initOnlineSync();
+    }
+  }
+
+  public getSyncStatus(): SyncStatus {
+    return this.syncStatus;
+  }
+
+  public subscribeSyncStatus(listener: (status: SyncStatus) => void): () => void {
+    const handler = () => listener(this.getSyncStatus());
+    this.listeners.add(handler);
+    return () => {
+      this.listeners.delete(handler);
+    };
+  }
+
+  public initOnlineSync(): void {
+    if (this.hasInitializedCloud) return;
+    this.hasInitializedCloud = true;
+
+    try {
+      const docRef = doc(firestore, 'school_data', 'main');
+
+      this.unsubscribeFirestore = onSnapshot(
+        docRef,
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const remoteData = snapshot.data() as AppDatabase;
+            if (remoteData && Array.isArray(remoteData.students) && Array.isArray(remoteData.users)) {
+              this.db = {
+                ...getInitialDatabase(),
+                ...remoteData,
+                settings: { ...INITIAL_SETTINGS, ...(remoteData.settings || {}) },
+              };
+              this.persistToLocalStorage(this.db);
+              this.syncStatus = 'connected';
+              this.listeners.forEach((fn) => fn());
+            }
+          } else {
+            // First time setup on cloud: upload initial database seed
+            this.pushToCloud(this.db);
+          }
+        },
+        (error) => {
+          console.warn('Real-time cloud sync notice:', error);
+          this.syncStatus = 'offline';
+          this.listeners.forEach((fn) => fn());
+        }
+      );
+    } catch (err) {
+      console.warn('Could not initialize cloud sync listener:', err);
+      this.syncStatus = 'offline';
+    }
   }
 
   private loadFromStorage(): AppDatabase {
@@ -377,18 +440,29 @@ class DatabaseService {
       console.warn('Failed to parse database from storage:', e);
     }
     const fresh = getInitialDatabase();
-    this.persist(fresh);
+    this.persistToLocalStorage(fresh);
     return fresh;
   }
 
-  private persist(data: AppDatabase) {
+  private persistToLocalStorage(data: AppDatabase) {
     try {
-      data.lastSync = new Date().toISOString();
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       }
     } catch (e) {
       console.error('Failed to save to storage:', e);
+    }
+  }
+
+  private async pushToCloud(data: AppDatabase) {
+    try {
+      this.syncStatus = 'syncing';
+      const docRef = doc(firestore, 'school_data', 'main');
+      await setDoc(docRef, data, { merge: true });
+      this.syncStatus = 'connected';
+    } catch (err) {
+      console.warn('Push to cloud error:', err);
+      this.syncStatus = 'offline';
     }
   }
 
@@ -400,8 +474,37 @@ class DatabaseService {
   }
 
   private notify() {
-    this.persist(this.db);
+    this.db.lastSync = new Date().toISOString();
+    this.persistToLocalStorage(this.db);
+    this.pushToCloud(this.db);
     this.listeners.forEach((fn) => fn());
+  }
+
+  public async syncWithCloudNow(): Promise<boolean> {
+    try {
+      const docRef = doc(firestore, 'school_data', 'main');
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const remoteData = snap.data() as AppDatabase;
+        if (remoteData && Array.isArray(remoteData.students) && Array.isArray(remoteData.users)) {
+          this.db = {
+            ...getInitialDatabase(),
+            ...remoteData,
+            settings: { ...INITIAL_SETTINGS, ...(remoteData.settings || {}) },
+          };
+          this.persistToLocalStorage(this.db);
+          this.syncStatus = 'connected';
+          this.listeners.forEach((fn) => fn());
+          return true;
+        }
+      } else {
+        await this.pushToCloud(this.db);
+        return true;
+      }
+    } catch (e) {
+      console.warn('Manual sync failed:', e);
+    }
+    return false;
   }
 
   public getSnapshot(): AppDatabase {
@@ -476,6 +579,22 @@ class DatabaseService {
       return true;
     }
     return false;
+  }
+
+  public toggleUserStatus(id: string): boolean {
+    const user = this.db.users.find((u) => u.id === id);
+    if (user) {
+      const newStatus = user.status === 'nonaktif' ? 'aktif' : 'nonaktif';
+      return this.updateUser(id, { status: newStatus });
+    }
+    return false;
+  }
+
+  public checkUsernameAvailable(username: string, excludeUserId?: string): boolean {
+    const clean = username.trim().toLowerCase();
+    return !this.db.users.some(
+      (u) => u.username.toLowerCase() === clean && u.id !== excludeUserId
+    );
   }
 
   // --- STUDENTS ---

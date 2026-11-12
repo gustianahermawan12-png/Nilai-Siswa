@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // School data collection for MI Nurul Falah portal synchronization
+    match /school_data/{documentId} {
+      allow read, write: if documentId in ['main', 'backup'] && request.time != null;
+    }
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

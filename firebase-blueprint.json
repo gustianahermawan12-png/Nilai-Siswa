@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "SchoolData": {
+      "title": "SchoolData",
+      "description": "Integrated central database document containing all academic, financial, attendance, and account records for MI Nurul Falah",
+      "type": "object",
+      "properties": {
+        "lastSync": {
+          "type": "string",
+          "description": "Timestamp of the last sync operation"
+        },
+        "settings": {
+          "type": "object",
+          "description": "School settings including KKM, academic year, and principal"
+        },
+        "users": {
+          "type": "array",
+          "description": "List of administrative and guardian user accounts"
+        },
+        "classes": {
+          "type": "array",
+          "description": "Rombel class definitions"
+        },
+        "students": {
+          "type": "array",
+          "description": "Enrolled student profiles"
+        },
+        "subjects": {
+          "type": "array",
+          "description": "Curriculum subjects"
+        },
+        "schedules": {
+          "type": "array",
+          "description": "Weekly timetable entries"
+        },
+        "dailyGrades": {
+          "type": "array",
+          "description": "Formative and chapter assessments"
+        },
+        "semesterGrades": {
+          "type": "array",
+          "description": "PTS and PAS summative grades"
+        },
+        "savings": {
+          "type": "array",
+          "description": "Savings ledger deposits and withdrawals"
+        },
+        "infak": {
+          "type": "array",
+          "description": "Monthly infak contributions"
+        },
+        "attendance": {
+          "type": "array",
+          "description": "Daily attendance rolls"
+        },
+        "excuseLetters": {
+          "type": "array",
+          "description": "Student absence requests from guardians"
+        },
+        "fees": {
+          "type": "array",
+          "description": "Special activity fee bills"
+        },
+        "feePayments": {
+          "type": "array",
+          "description": "Payment records for fee bills"
+        },
+        "announcements": {
+          "type": "array",
+          "description": "Official school announcements"
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/school_data/{documentId}": {
+      "schema": "SchoolData",
+      "description": "Synchronized real-time storage for MI Nurul Falah"
+    }
+  }
+}
