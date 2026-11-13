@@ -3,29 +3,70 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { User } from './types';
 import { dbService } from './services/db';
 import { Navbar } from './components/Navbar';
 import { Sidebar, TabKey } from './components/Sidebar';
 import { LoginPage } from './components/LoginPage';
 import { Dashboard } from './components/Dashboard';
-import { StudentManagement } from './components/StudentManagement';
-import { WaliMuridAccounts } from './components/WaliMuridAccounts';
-import { ScheduleManagement } from './components/ScheduleManagement';
-import { DailyGradesManagement } from './components/DailyGradesManagement';
-import { SemesterGradesManagement } from './components/SemesterGradesManagement';
-import { SavingsManagement } from './components/SavingsManagement';
-import { InfakManagement } from './components/InfakManagement';
-import { AttendanceManagement } from './components/AttendanceManagement';
-import { ExcuseLettersManagement } from './components/ExcuseLettersManagement';
-import { FeesManagement } from './components/FeesManagement';
-import { AnnouncementsManagement } from './components/AnnouncementsManagement';
-import { SubjectsManagement } from './components/SubjectsManagement';
-import { ReportPrinting } from './components/ReportPrinting';
-import { SchoolSettingsView } from './components/SchoolSettingsView';
-import { GoogleIntegrationModal } from './components/GoogleIntegrationModal';
-import { UserProfileModal } from './components/UserProfileModal';
+
+const StudentManagement = lazy(() =>
+  import('./components/StudentManagement').then((m) => ({ default: m.StudentManagement }))
+);
+const WaliMuridAccounts = lazy(() =>
+  import('./components/WaliMuridAccounts').then((m) => ({ default: m.WaliMuridAccounts }))
+);
+const ScheduleManagement = lazy(() =>
+  import('./components/ScheduleManagement').then((m) => ({ default: m.ScheduleManagement }))
+);
+const DailyGradesManagement = lazy(() =>
+  import('./components/DailyGradesManagement').then((m) => ({ default: m.DailyGradesManagement }))
+);
+const SemesterGradesManagement = lazy(() =>
+  import('./components/SemesterGradesManagement').then((m) => ({
+    default: m.SemesterGradesManagement,
+  }))
+);
+const SavingsManagement = lazy(() =>
+  import('./components/SavingsManagement').then((m) => ({ default: m.SavingsManagement }))
+);
+const InfakManagement = lazy(() =>
+  import('./components/InfakManagement').then((m) => ({ default: m.InfakManagement }))
+);
+const AttendanceManagement = lazy(() =>
+  import('./components/AttendanceManagement').then((m) => ({ default: m.AttendanceManagement }))
+);
+const ExcuseLettersManagement = lazy(() =>
+  import('./components/ExcuseLettersManagement').then((m) => ({
+    default: m.ExcuseLettersManagement,
+  }))
+);
+const FeesManagement = lazy(() =>
+  import('./components/FeesManagement').then((m) => ({ default: m.FeesManagement }))
+);
+const AnnouncementsManagement = lazy(() =>
+  import('./components/AnnouncementsManagement').then((m) => ({
+    default: m.AnnouncementsManagement,
+  }))
+);
+const SubjectsManagement = lazy(() =>
+  import('./components/SubjectsManagement').then((m) => ({ default: m.SubjectsManagement }))
+);
+const ReportPrinting = lazy(() =>
+  import('./components/ReportPrinting').then((m) => ({ default: m.ReportPrinting }))
+);
+const SchoolSettingsView = lazy(() =>
+  import('./components/SchoolSettingsView').then((m) => ({ default: m.SchoolSettingsView }))
+);
+const GoogleIntegrationModal = lazy(() =>
+  import('./components/GoogleIntegrationModal').then((m) => ({
+    default: m.GoogleIntegrationModal,
+  }))
+);
+const UserProfileModal = lazy(() =>
+  import('./components/UserProfileModal').then((m) => ({ default: m.UserProfileModal }))
+);
 import {
   LayoutDashboard,
   FileCheck2,
@@ -151,6 +192,16 @@ export default function App() {
 
         {/* Main Content View */}
         <main className="flex-1 p-3 sm:p-6 lg:p-8 overflow-y-auto pb-24 lg:pb-8 print:p-0 print:overflow-visible">
+          <Suspense
+            fallback={
+              <div className="flex items-center justify-center py-16">
+                <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-2xl border border-emerald-100 shadow-xs text-xs font-bold text-emerald-800">
+                  <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                  <span>Memuat halaman...</span>
+                </div>
+              </div>
+            }
+          >
           {activeTab === 'dashboard' && (
             <Dashboard currentUser={currentUser} onNavigate={setActiveTab} />
           )}
@@ -254,6 +305,7 @@ export default function App() {
               onOpenGoogleWorkspace={() => setIsGoogleModalOpen(true)}
             />
           )}
+          </Suspense>
         </main>
       </div>
 
@@ -333,16 +385,20 @@ export default function App() {
 
       {/* User Profile Modal */}
       {isProfileModalOpen && (
-        <UserProfileModal
-          currentUser={currentUser}
-          onClose={() => setIsProfileModalOpen(false)}
-          onUserUpdated={(updated) => setCurrentUser(updated)}
-        />
+        <Suspense fallback={null}>
+          <UserProfileModal
+            currentUser={currentUser}
+            onClose={() => setIsProfileModalOpen(false)}
+            onUserUpdated={(updated) => setCurrentUser(updated)}
+          />
+        </Suspense>
       )}
 
       {/* Google Workspace Modal */}
       {isGoogleModalOpen && (
-        <GoogleIntegrationModal onClose={() => setIsGoogleModalOpen(false)} />
+        <Suspense fallback={null}>
+          <GoogleIntegrationModal onClose={() => setIsGoogleModalOpen(false)} />
+        </Suspense>
       )}
     </div>
   );

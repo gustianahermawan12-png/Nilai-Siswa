@@ -1,5 +1,4 @@
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import type { jsPDF as JsPDFType } from 'jspdf';
 import { AppDatabase, Student, ClassGroup } from '../types';
 import {
   calculateSavingsBalance,
@@ -277,6 +276,10 @@ export async function downloadReportPdf(
   docData: ReportDocumentData,
   logoPath = '/assets/aistudio/WhatsApp_Image_2026-11-09_at_08.49.13_96750bdd.jpeg'
 ): Promise<void> {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const margin = 14;
@@ -426,7 +429,7 @@ export async function downloadReportPdf(
         0: { halign: 'center', cellWidth: 10 },
       },
     });
-    const finalY = (pdf as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY;
+    const finalY = (pdf as JsPDFType & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY;
     y = (finalY || y + 20) + 6;
   } else {
     pdf.setFont('helvetica', 'italic');
