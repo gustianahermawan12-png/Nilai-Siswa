@@ -3,6 +3,7 @@ import {
   getFirestore,
   doc,
   getDoc,
+  getDocFromServer,
   setDoc,
   onSnapshot,
   Firestore,
@@ -66,4 +67,4 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-export { doc, getDoc, setDoc, onSnapshot };
+export { doc, getDoc, getDocFromServer, setDoc, onSnapshot };

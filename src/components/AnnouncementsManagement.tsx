@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Announcement, User } from '../types';
 import { dbService } from '../services/db';
+import { compressImageFile } from '../utils/imageHelper';
 import {
   Bell,
   Plus,
@@ -9,9 +10,6 @@ import {
   Calendar,
   Camera,
   Check,
-  X,
-  Sparkles,
-  Share2,
 } from 'lucide-react';
 
 interface AnnouncementsManagementProps {
@@ -63,20 +61,18 @@ export const AnnouncementsManagement: React.FC<AnnouncementsManagementProps> = (
     setIsModalOpen(true);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setAttachmentUrl(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 640, 0.72);
+      setAttachmentUrl(compressed);
+    } catch {
+      showToast('Gagal memproses foto dari galeri.');
     }
   };
 
-  const handleSaveAnn = (e: React.FormEvent) => {
+  const handleSaveAnn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !content.trim()) {
       showToast('Judul dan isi pengumuman wajib diisi!');
@@ -91,6 +87,7 @@ export const AnnouncementsManagement: React.FC<AnnouncementsManagementProps> = (
         targetClassId,
         attachmentUrl: attachmentUrl || undefined,
       });
+      await dbService.saveAndSyncNow();
       showToast('Pengumuman berhasil diperbarui.');
     } else {
       dbService.addAnnouncement({
@@ -101,16 +98,18 @@ export const AnnouncementsManagement: React.FC<AnnouncementsManagementProps> = (
         attachmentUrl: attachmentUrl || undefined,
         authorName: currentUser.name,
       });
+      await dbService.saveAndSyncNow();
       showToast('Pengumuman baru berhasil diterbitkan.');
     }
 
     setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!annToDelete) return;
     const success = dbService.deleteAnnouncement(annToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast('Pengumuman berhasil dihapus.');
     }
     setAnnToDelete(null);
@@ -136,7 +135,7 @@ export const AnnouncementsManagement: React.FC<AnnouncementsManagementProps> = (
           <p className="text-xs text-gray-500 mt-1">
             {isAdmin
               ? 'Terbitkan surat edaran, jadwal kegiatan, dan pengumuman resmi untuk seluruh wali murid.'
-              : 'Informasi dan pengumuman resmi terkini dari MI Nurul Falah Bandung.'}
+              : 'Informasi dan pengumuman resmi terkini dari MI Nurul Falah.'}
           </p>
         </div>
 
@@ -227,132 +226,139 @@ export const AnnouncementsManagement: React.FC<AnnouncementsManagementProps> = (
 
       {/* Modal Add / Edit Announcement */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <Bell className="w-5 h-5 text-amber-300" />
-                <span>{editingAnn ? 'Edit Pengumuman' : 'Terbitkan Pengumuman Baru'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <Bell className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">{editingAnn ? 'Edit Pengumuman' : 'Terbitkan Pengumuman Baru'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveAnn} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Judul Pengumuman <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Contoh: Jadwal Penilaian Akhir Semester (PAS) Gasal"
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveAnn} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Tanggal Terbit <span className="text-red-500">*</span>
+                    Judul Pengumuman <span className="text-red-500">*</span>
                   </label>
                   <input
-                    type="date"
+                    type="text"
                     required
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Contoh: Jadwal Penilaian Akhir Semester (PAS) Gasal"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
                   />
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Tanggal Terbit <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Target Wali Murid <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={targetClassId}
+                      onChange={(e) => setTargetClassId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      <option value="semua">Semua Siswa & Wali</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Target Wali Murid <span className="text-red-500">*</span>
+                    Isi Surat Edaran / Pengumuman <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={targetClassId}
-                    onChange={(e) => setTargetClassId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    <option value="semua">Semua Siswa & Wali</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  <textarea
+                    rows={4}
+                    required
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    placeholder="Tuliskan isi pengumuman lengkap untuk wali murid..."
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                {/* Photo attachment */}
+                <div className="p-3 bg-gray-50 rounded-2xl border border-gray-200">
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                    Lampiran Gambar / Poster (Opsional)
+                  </label>
+                  <div className="flex items-center gap-3 mt-1.5">
+                    {attachmentUrl ? (
+                      <img
+                        src={attachmentUrl}
+                        alt="Lampiran"
+                        className="w-14 h-14 rounded-xl object-cover border border-gray-300 bg-white"
+                      />
+                    ) : null}
+                    <label className="px-3.5 py-2 bg-white hover:bg-gray-100 text-gray-800 text-xs font-bold rounded-xl border border-gray-300 cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-xs">
+                      <Camera className="w-4 h-4 text-emerald-700" />
+                      <span>Pilih Foto dari Galeri</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    {attachmentUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setAttachmentUrl('')}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Hapus Foto
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Isi Surat Edaran / Pengumuman <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  rows={4}
-                  required
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  placeholder="Tuliskan isi pengumuman lengkap untuk wali murid..."
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              {/* Photo attachment */}
-              <div className="p-3 bg-gray-50 rounded-2xl border border-gray-200">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Lampiran Gambar / Poster (Opsional)
-                </label>
-                <div className="flex items-center gap-3 mt-1.5">
-                  {attachmentUrl ? (
-                    <img
-                      src={attachmentUrl}
-                      alt="Lampiran"
-                      className="w-14 h-14 rounded-xl object-cover border border-gray-300 bg-white"
-                    />
-                  ) : null}
-                  <label className="px-3.5 py-2 bg-white hover:bg-gray-100 text-gray-800 text-xs font-bold rounded-xl border border-gray-300 cursor-pointer transition-colors inline-flex items-center gap-1.5 shadow-xs">
-                    <Camera className="w-4 h-4 text-emerald-700" />
-                    <span>Pilih Foto dari Galeri</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                  </label>
-                  {attachmentUrl && (
-                    <button
-                      type="button"
-                      onClick={() => setAttachmentUrl('')}
-                      className="text-xs text-red-600 hover:underline"
-                    >
-                      Hapus Foto
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-amber-300" />
                   <span>{editingAnn ? 'Simpan Perubahan' : 'Terbitkan Pengumuman'}</span>
                 </button>
               </div>

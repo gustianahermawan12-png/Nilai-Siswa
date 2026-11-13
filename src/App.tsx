@@ -63,25 +63,35 @@ export default function App() {
     return () => unsub();
   }, [currentUser]);
 
-  // Restore user session securely across browser tabs and reloads
+  // Restore user session securely across browser tabs and reloads + sync latest from Cloud
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      // Check stored session in localStorage (or fallback sessionStorage)
-      const storedUserId =
-        localStorage.getItem('minurulfalah_current_user_id') ||
-        sessionStorage.getItem('minurulfalah_current_user_id');
+    if (typeof window === 'undefined') return;
+    const storedUserId =
+      localStorage.getItem('minurulfalah_current_user_id') ||
+      sessionStorage.getItem('minurulfalah_current_user_id');
 
-      if (storedUserId) {
-        const found = dbService.getUsers().find((u) => u.id === storedUserId);
-        if (found && found.status !== 'nonaktif') {
-          setCurrentUser(found);
-          return;
-        } else {
+    if (storedUserId) {
+      const found = dbService.getUsers().find((u) => u.id === storedUserId);
+      if (found && found.status !== 'nonaktif') {
+        setCurrentUser(found);
+      } else {
+        localStorage.removeItem('minurulfalah_current_user_id');
+        sessionStorage.removeItem('minurulfalah_current_user_id');
+      }
+    }
+
+    dbService.syncWithCloudNow().then((synced) => {
+      if (synced && storedUserId) {
+        const fresh = dbService.getUsers().find((u) => u.id === storedUserId);
+        if (fresh && fresh.status !== 'nonaktif') {
+          setCurrentUser(fresh);
+        } else if (fresh && fresh.status === 'nonaktif') {
+          setCurrentUser(null);
           localStorage.removeItem('minurulfalah_current_user_id');
           sessionStorage.removeItem('minurulfalah_current_user_id');
         }
       }
-    }
+    });
   }, []);
 
   const handleLogin = (user: User) => {
@@ -117,7 +127,7 @@ export default function App() {
   const isAdmin = currentUser.role === 'admin';
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-gray-900 selection:bg-amber-400 selection:text-emerald-950">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-gray-900 selection:bg-amber-400 selection:text-emerald-950 print:bg-white print:min-h-0">
       {/* Top Navbar */}
       <Navbar
         currentUser={currentUser}
@@ -128,7 +138,7 @@ export default function App() {
         lastSavedText={lastSavedText}
       />
 
-      <div className="flex-1 flex max-w-7xl w-full mx-auto">
+      <div className="flex-1 flex max-w-7xl w-full mx-auto print:block print:max-w-none">
         {/* Responsive Sidebar */}
         <Sidebar
           currentUser={currentUser}
@@ -140,7 +150,7 @@ export default function App() {
         />
 
         {/* Main Content View */}
-        <main className="flex-1 p-3 sm:p-6 lg:p-8 overflow-y-auto pb-24 lg:pb-8">
+        <main className="flex-1 p-3 sm:p-6 lg:p-8 overflow-y-auto pb-24 lg:pb-8 print:p-0 print:overflow-visible">
           {activeTab === 'dashboard' && (
             <Dashboard currentUser={currentUser} onNavigate={setActiveTab} />
           )}
@@ -150,7 +160,10 @@ export default function App() {
           )}
 
           {activeTab === 'wali_accounts' && isAdmin && (
-            <WaliMuridAccounts initialStudentId={targetStudentForWali} />
+            <WaliMuridAccounts
+              initialStudentId={targetStudentForWali}
+              onOpenGoogleWorkspace={() => setIsGoogleModalOpen(true)}
+            />
           )}
 
           {activeTab === 'subjects' && isAdmin && (
@@ -238,13 +251,14 @@ export default function App() {
             <SchoolSettingsView
               currentUser={currentUser}
               onClose={() => setActiveTab('dashboard')}
+              onOpenGoogleWorkspace={() => setIsGoogleModalOpen(true)}
             />
           )}
         </main>
       </div>
 
       {/* Mobile Bottom Quick Navigation Bar (For fast thumb access on phones) */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-emerald-900 border-t-2 border-amber-400 text-white px-2 py-1.5 flex justify-around items-center z-40 shadow-2xl">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 bg-emerald-900 border-t-2 border-amber-400 text-white px-2 py-1.5 flex justify-around items-center z-40 shadow-2xl print:hidden">
         <button
           type="button"
           onClick={() => setActiveTab('dashboard')}

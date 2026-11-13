@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { dbService } from '../services/db';
+import { dbService, SyncStatus } from '../services/db';
 import { verifyPassword, hashPassword } from '../utils/security';
+import { normalizeUsername } from '../utils/dbSanitizer';
 import {
   Lock,
   User as UserIcon,
@@ -16,6 +17,8 @@ import {
   CheckCircle,
   AlertCircle,
   Loader2,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -29,6 +32,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isForgotOpen, setIsForgotOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => dbService.getSyncStatus());
 
   // Forgot password states
   const [forgotUsername, setForgotUsername] = useState('');
@@ -38,15 +42,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [forgotSuccess, setForgotSuccess] = useState('');
   const [forgotError, setForgotError] = useState('');
 
+  useEffect(() => {
+    dbService.syncWithCloudNow();
+    return dbService.subscribeSyncStatus((st) => setSyncStatus(st));
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     setIsLoading(true);
 
     try {
+      // Pull latest accounts from Firestore before verifying so accounts created on another device work immediately
+      await dbService.syncWithCloudNow();
+
       const users = dbService.getUsers();
-      const cleanUsername = username.trim().toLowerCase();
-      const user = users.find((u) => u.username.toLowerCase() === cleanUsername);
+      const cleanUsername = normalizeUsername(username);
+      const user = users.find((u) => normalizeUsername(u.username) === cleanUsername);
 
       if (!user) {
         setErrorMsg('Nama pengguna tidak terdaftar di sistem madrasah.');
@@ -74,12 +86,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleCheckForgotUsername = (e: React.FormEvent) => {
+  const handleCheckForgotUsername = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError('');
     setForgotSuccess('');
+    await dbService.syncWithCloudNow();
     const users = dbService.getUsers();
-    const user = users.find((u) => u.username.toLowerCase() === forgotUsername.trim().toLowerCase());
+    const clean = normalizeUsername(forgotUsername);
+    const user = users.find((u) => normalizeUsername(u.username) === clean);
     if (user) {
       setFoundUser(user);
     } else {
@@ -98,14 +112,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       }
     }
 
-    if (!newPassword.trim() || newPassword.length < 4) {
+    if (!newPassword.trim() || newPassword.trim().length < 4) {
       setForgotError('Kata sandi baru minimal 4 karakter.');
       return;
     }
 
     const hashed = await hashPassword(newPassword.trim());
     dbService.updateUser(foundUser.id, { password: hashed });
-    setForgotSuccess('Kata sandi berhasil diperbarui! Silakan masuk dengan kata sandi baru.');
+    await dbService.saveAndSyncNow();
+    setForgotSuccess('Kata sandi berhasil diperbarui & disimpan ke Cloud! Silakan masuk dengan kata sandi baru.');
     setTimeout(() => {
       setIsForgotOpen(false);
       setFoundUser(null);
@@ -246,8 +261,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         </div>
 
         {/* Footer info */}
-        <div className="bg-gray-50 px-6 py-3 border-t border-gray-100 text-center text-[11px] text-gray-500">
-          MI Nurul Falah Bandung &bull; Sistem Terpadu Madrasah
+        <div className="bg-gray-50 px-6 py-3 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
+          <span>MI Nurul Falah &bull; Sistem Terpadu</span>
+          <span className="inline-flex items-center gap-1 font-semibold">
+            {syncStatus === 'connected' ? (
+              <>
+                <Wifi className="w-3 h-3 text-emerald-600" />
+                <span className="text-emerald-700">Cloud Online</span>
+              </>
+            ) : syncStatus === 'syncing' ? (
+              <>
+                <Loader2 className="w-3 h-3 text-amber-600 animate-spin" />
+                <span className="text-amber-700">Sinkronisasi...</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3 text-gray-400" />
+                <span>Mode Lokal</span>
+              </>
+            )}
+          </span>
         </div>
       </div>
 

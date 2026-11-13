@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { dbService } from '../services/db';
 import { hashPassword } from '../utils/security';
+import { validateCredentialsInput } from '../utils/dbSanitizer';
+import { compressImageFile } from '../utils/imageHelper';
 import {
   X,
   User as UserIcon,
@@ -49,35 +51,41 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setAvatarUrl(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressed = await compressImageFile(file);
+        setAvatarUrl(compressed);
+      } catch {
+        setErrorMsg('Gagal memproses file foto profil.');
+      }
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setSuccessMsg('');
 
     if (!name.trim()) {
       setErrorMsg('Nama lengkap wajib diisi.');
       return;
     }
 
-    const cleanUsername = username.trim().toLowerCase();
-    if (!cleanUsername) {
-      setErrorMsg('Nama pengguna (username) wajib diisi.');
+    const validation = validateCredentialsInput({
+      username,
+      password,
+      requirePassword: false,
+      minPasswordLength: 4,
+    });
+
+    if (!validation.valid) {
+      setErrorMsg(validation.error || 'Kredensial tidak valid.');
       return;
     }
 
-    if (!dbService.checkUsernameAvailable(cleanUsername, currentUser.id)) {
+    if (!dbService.checkUsernameAvailable(validation.cleanUsername, currentUser.id)) {
       setErrorMsg('Nama pengguna sudah digunakan oleh akun lain.');
       return;
     }
@@ -87,29 +95,29 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     try {
       const updatedPartial: Partial<User> = {
         name: name.trim(),
-        username: cleanUsername,
+        username: validation.cleanUsername,
         title: title.trim(),
         phone: phone.trim(),
         avatarUrl,
       };
 
-      if (password.trim()) {
-        if (password.trim().length < 4) {
-          setErrorMsg('Kata sandi baru minimal 4 karakter.');
-          setIsSaving(false);
-          return;
-        }
-        updatedPartial.password = await hashPassword(password.trim());
+      if (validation.cleanPassword) {
+        updatedPartial.password = await hashPassword(validation.cleanPassword);
       }
 
       dbService.updateUser(currentUser.id, updatedPartial);
+      const syncRes = await dbService.saveAndSyncNow();
       const updatedUser: User = { ...currentUser, ...updatedPartial };
       onUserUpdated(updatedUser);
 
-      setSuccessMsg('Profil dan kredensial akun berhasil diperbarui!');
+      if (syncRes.ok) {
+        setSuccessMsg('Profil dan kredensial berhasil disimpan ke Cloud!');
+      } else {
+        setSuccessMsg('Profil disimpan secara lokal. Sinkronisasi cloud akan dicoba ulang.');
+      }
       setTimeout(() => {
         onClose();
-      }, 1000);
+      }, 900);
     } catch (err) {
       console.error('Save profile error:', err);
       setErrorMsg('Terjadi kesalahan saat menyimpan profil.');
@@ -120,29 +128,29 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border-t-4 border-emerald-600 max-h-[90dvh] sm:max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 my-auto">
+      <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border-t-4 border-emerald-600 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
         {/* Pinned Modal Header: Always visible at the top */}
-        <div className="shrink-0 px-4 sm:px-6 py-3 sm:py-3.5 bg-emerald-800 text-white flex items-center justify-between border-b border-emerald-900 shadow-xs z-10">
-          <div className="flex items-center gap-2">
+        <div className="shrink-0 px-4 sm:px-5 py-3 bg-emerald-800 text-white flex items-center justify-between border-b border-emerald-900 shadow-xs z-10">
+          <div className="flex items-center gap-2 min-w-0">
             <UserIcon className="w-5 h-5 text-amber-300 shrink-0" />
-            <div>
-              <h3 className="font-bold text-sm sm:text-base leading-tight">Ganti Nama di Bar Atas & Profil</h3>
-              <p className="text-[10px] sm:text-[11px] text-emerald-200">Perbarui identitas yang tampil pada bar aplikasi</p>
+            <div className="min-w-0">
+              <h3 className="font-bold text-sm sm:text-base leading-tight truncate">Ganti Nama di Bar Atas & Profil</h3>
+              <p className="text-[10px] sm:text-[11px] text-emerald-200 truncate">Perbarui identitas & kredensial login</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-emerald-100 hover:text-white bg-emerald-900/80 hover:bg-emerald-700 transition-colors flex items-center gap-1.5 border border-emerald-600/80 cursor-pointer shadow-xs shrink-0"
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold text-white bg-red-600/90 hover:bg-red-600 transition-colors flex items-center gap-1 border border-red-400/50 cursor-pointer shadow-xs shrink-0 ml-2"
             aria-label="Tutup modal ganti nama"
             title="Tutup (Esc)"
           >
-            <X className="w-4 h-4 text-red-300" />
+            <X className="w-4 h-4" />
             <span>Tutup</span>
           </button>
         </div>
@@ -150,7 +158,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         {/* Modal Form with scrollable body and pinned footer */}
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Scrollable Form Body: Easily scrolls up and down on all phones */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 overscroll-contain touch-pan-y">
             {successMsg && (
               <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-semibold flex items-center gap-2">
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />

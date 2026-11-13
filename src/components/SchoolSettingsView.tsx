@@ -1,17 +1,21 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SchoolSettings, User } from '../types';
 import { dbService } from '../services/db';
 import { hashPassword } from '../utils/security';
 import {
+  validateCredentialsInput,
+  getShareableAppUrl,
+  ACADEMIC_YEAR_PRESETS,
+  validateAcademicYearInput,
+} from '../utils/dbSanitizer';
+import {
   Settings,
   Save,
   Check,
-  RefreshCcw,
   School,
   Award,
   AlertTriangle,
   RotateCcw,
-  UserCheck,
   Key,
   AtSign,
   Eye,
@@ -19,18 +23,32 @@ import {
   ShieldCheck,
   Shield,
   X,
+  Cloud,
+  Share2,
 } from 'lucide-react';
 
 interface SchoolSettingsViewProps {
   currentUser: User;
   onClose?: () => void;
+  onOpenGoogleWorkspace?: () => void;
 }
 
-export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentUser, onClose }) => {
+export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({
+  currentUser,
+  onClose,
+  onOpenGoogleWorkspace,
+}) => {
   const db = dbService.getSnapshot();
   const [settings, setSettings] = useState<SchoolSettings>(db.settings);
+  const [syncAcademicToClasses, setSyncAcademicToClasses] = useState(true);
   const [toastMsg, setToastMsg] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    setSettings(db.settings);
+  }, [db.settings.academicYear, db.settings.semester, db.settings.defaultKkm, db.settings.schoolName]);
 
   // Admin credentials state
   const [adminUsername, setAdminUsername] = useState(currentUser.username);
@@ -40,9 +58,24 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
   const [adminCredError, setAdminCredError] = useState('');
   const [isSavingCreds, setIsSavingCreds] = useState(false);
 
+  const shareUrl =
+    typeof window !== 'undefined' ? getShareableAppUrl(window.location.origin) : '';
+
   const showToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 3000);
+    setTimeout(() => setToastMsg(''), 3500);
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedLink(true);
+      showToast('Link aplikasi siap share berhasil disalin!');
+      setTimeout(() => setCopiedLink(false), 2500);
+    } catch {
+      showToast(`Salin link ini secara manual: ${shareUrl}`);
+    }
   };
 
   const handleSaveAdminCredentials = async (e: React.FormEvent) => {
@@ -50,53 +83,96 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
     setAdminCredMsg('');
     setAdminCredError('');
 
-    const trimmedUsername = adminUsername.trim();
-    if (!trimmedUsername) {
-      setAdminCredError('Nama pengguna admin tidak boleh kosong.');
+    const validation = validateCredentialsInput({
+      username: adminUsername,
+      password: adminPassword,
+      requirePassword: false,
+      minPasswordLength: 4,
+    });
+
+    if (!validation.valid) {
+      setAdminCredError(validation.error || 'Format username atau kata sandi tidak valid.');
       return;
     }
 
-    if (trimmedUsername !== currentUser.username) {
-      const isAvail = dbService.checkUsernameAvailable(trimmedUsername, currentUser.id);
-      if (!isAvail) {
-        setAdminCredError(`Nama pengguna "${trimmedUsername}" sudah dipakai oleh akun lain.`);
-        return;
-      }
+    const { cleanUsername, cleanPassword } = validation;
+    const isAvail = dbService.checkUsernameAvailable(cleanUsername, currentUser.id);
+    if (!isAvail) {
+      setAdminCredError(`Nama pengguna "${cleanUsername}" sudah dipakai oleh akun lain.`);
+      return;
     }
 
     setIsSavingCreds(true);
     try {
       const updates: Partial<User> = {
-        username: trimmedUsername,
+        username: cleanUsername,
       };
-      if (adminPassword.trim()) {
-        if (adminPassword.trim().length < 6) {
-          setAdminCredError('Kata sandi baru minimal 6 karakter.');
-          setIsSavingCreds(false);
-          return;
-        }
-        updates.password = await hashPassword(adminPassword.trim());
+      if (cleanPassword) {
+        updates.password = await hashPassword(cleanPassword);
       }
 
       dbService.updateUser(currentUser.id, updates);
+      const syncRes = await dbService.saveAndSyncNow();
+      if (!syncRes.ok) {
+        setAdminCredError(
+          `Tersimpan lokal, tetapi gagal sinkron ke Cloud: ${syncRes.error || 'Periksa koneksi.'}`
+        );
+        return;
+      }
+
+      setAdminUsername(cleanUsername);
       setAdminPassword('');
-      setAdminCredMsg('Kredensial login admin berhasil diperbarui dan tersimpan ke Cloud Database!');
-      showToast('Kredensial admin berhasil disimpan!');
-    } catch (err: any) {
-      setAdminCredError(err?.message || 'Gagal menyimpan kredensial admin.');
+      setAdminCredMsg(
+        `Kredensial admin ("${cleanUsername}") berhasil diperbarui dan tersimpan ke Cloud Database!`
+      );
+      showToast('Kredensial admin berhasil disimpan & tersinkron ke Cloud!');
+    } catch (err: unknown) {
+      setAdminCredError(
+        err instanceof Error ? err.message : 'Gagal menyimpan kredensial admin.'
+      );
     } finally {
       setIsSavingCreds(false);
     }
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    dbService.updateSettings(settings);
-    showToast('Pengaturan madrasah berhasil disimpan dan diperbarui!');
+  const saveSettingsAction = async () => {
+    const yearCheck = validateAcademicYearInput(settings.academicYear);
+    if (!yearCheck.valid) {
+      showToast(yearCheck.error || 'Format Tahun Pelajaran tidak valid.');
+      return;
+    }
+
+    const updatedSettings: SchoolSettings = {
+      ...settings,
+      academicYear: yearCheck.cleanYear,
+    };
+    setSettings(updatedSettings);
+    setIsSavingSettings(true);
+    dbService.updateSettings(updatedSettings);
+    if (syncAcademicToClasses) {
+      dbService.updateAcademicPeriod(yearCheck.cleanYear, updatedSettings.semester, true);
+    }
+    const syncRes = await dbService.saveAndSyncNow();
+    setIsSavingSettings(false);
+    if (syncRes.ok) {
+      showToast(
+        `Pengaturan & Tahun Ajaran (${yearCheck.cleanYear} • ${updatedSettings.semester}) berhasil disimpan ke Cloud!`
+      );
+    } else {
+      showToast(
+        `Pengaturan tersimpan lokal, namun gagal sinkron ke Cloud: ${syncRes.error || ''}`
+      );
+    }
   };
 
-  const handleResetData = () => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await saveSettingsAction();
+  };
+
+  const handleResetData = async () => {
     dbService.resetToDefault();
+    await dbService.saveAndSyncNow();
     setSettings(dbService.getSnapshot().settings);
     setShowResetConfirm(false);
     showToast('Database berhasil direset ke data awal bawaan MI Nurul Falah.');
@@ -107,7 +183,7 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
       {/* Toast Alert */}
       {toastMsg && (
         <div className="fixed top-24 right-6 z-50 bg-emerald-800 text-white px-4 py-3 rounded-2xl shadow-2xl border-2 border-amber-400 flex items-center gap-2 animate-in fade-in slide-in-from-top-4">
-          <Check className="w-5 h-5 text-amber-300" />
+          <Check className="w-5 h-5 text-amber-300 shrink-0" />
           <span className="text-xs font-bold">{toastMsg}</span>
         </div>
       )}
@@ -120,11 +196,11 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
             <span>Pengaturan Madrasah & KKM</span>
           </h2>
           <p className="text-xs text-gray-500 mt-1">
-            Konfigurasi profil madrasah, batas nilai minimal ketuntasan (KKM), tahun ajaran, dan semester aktif.
+            Konfigurasi profil madrasah, kredensial login admin, batas KKM, cadangan Drive, dan link portal siap share.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+        <div className="flex items-center gap-2 flex-wrap shrink-0">
           {onClose && (
             <button
               type="button"
@@ -137,13 +213,40 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
             </button>
           )}
 
+          {onOpenGoogleWorkspace && (
+            <button
+              type="button"
+              onClick={onOpenGoogleWorkspace}
+              className="px-4 py-2.5 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold text-xs rounded-xl border border-amber-300 transition-colors flex items-center gap-1.5 cursor-pointer"
+              title="Simpan cadangan ke Google Drive & Google Sheets"
+            >
+              <Cloud className="w-4 h-4 text-amber-700" />
+              <span>Simpan ke Google Drive</span>
+            </button>
+          )}
+
           <button
             type="button"
-            onClick={handleSaveSettings}
-            className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950 cursor-pointer"
+            onClick={handleCopyShareLink}
+            className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-900 font-bold text-xs rounded-xl border border-blue-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+            title="Salin link portal untuk dibagikan"
+          >
+            {copiedLink ? (
+              <Check className="w-4 h-4 text-green-600" />
+            ) : (
+              <Share2 className="w-4 h-4 text-blue-600" />
+            )}
+            <span>{copiedLink ? 'Link Disalin!' : 'Salin Link Siap Share'}</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSavingSettings}
+            onClick={saveSettingsAction}
+            className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950 cursor-pointer disabled:opacity-60"
           >
             <Save className="w-4 h-4 text-amber-300" />
-            <span>Simpan Semua Pengaturan</span>
+            <span>{isSavingSettings ? 'Menyimpan...' : 'Simpan Semua Pengaturan'}</span>
           </button>
         </div>
       </div>
@@ -204,7 +307,7 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
                   className="w-full px-3.5 py-2.5 text-xs bg-emerald-950/80 border border-emerald-700 focus:border-amber-400 text-white rounded-xl focus:ring-2 focus:ring-amber-400 outline-none font-bold"
                 />
                 <p className="text-[10px] text-emerald-300/80 mt-1">
-                  Digunakan untuk login di semua perangkat (HP, iPhone, Laptop, PC).
+                  Huruf kecil tanpa spasi. Digunakan login di semua perangkat.
                 </p>
               </div>
 
@@ -218,7 +321,7 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
                     type={showAdminPass ? 'text' : 'password'}
                     value={adminPassword}
                     onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="Kosongkan jika tidak diubah (min. 6 karakter)"
+                    placeholder="Kosongkan jika tidak diubah (min. 4 karakter)"
                     className="w-full px-3.5 py-2.5 text-xs bg-emerald-950/80 border border-emerald-700 focus:border-amber-400 text-white rounded-xl focus:ring-2 focus:ring-amber-400 outline-none pr-10"
                   />
                   <button
@@ -239,10 +342,10 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
               <button
                 type="submit"
                 disabled={isSavingCreds}
-                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 flex items-center gap-2 disabled:opacity-50"
+                className="px-5 py-2.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl shadow-lg transition-transform active:scale-95 flex items-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 <Save className="w-4 h-4" />
-                <span>{isSavingCreds ? 'Menyimpan...' : 'Perbarui Kredensial Admin'}</span>
+                <span>{isSavingCreds ? 'Menyimpan...' : 'Simpan Kredensial Admin'}</span>
               </button>
             </div>
           </form>
@@ -374,16 +477,32 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
 
             <div>
               <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                Tahun Pelajaran Aktif
+                Tahun Ajaran / Pelajaran Aktif <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 required
                 value={settings.academicYear}
                 onChange={(e) => setSettings({ ...settings, academicYear: e.target.value })}
-                placeholder="2024/2025"
-                className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono font-bold"
+                placeholder="2025/2026"
+                className="w-full px-3 py-2 text-xs border-2 border-emerald-300 bg-emerald-50/40 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono font-bold text-emerald-950"
               />
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {ACADEMIC_YEAR_PRESETS.map((yr) => (
+                  <button
+                    key={yr}
+                    type="button"
+                    onClick={() => setSettings({ ...settings, academicYear: yr })}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono border transition-colors cursor-pointer ${
+                      settings.academicYear === yr
+                        ? 'bg-emerald-700 text-white border-emerald-800'
+                        : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-emerald-50'
+                    }`}
+                  >
+                    {yr}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div>
@@ -402,6 +521,18 @@ export const SchoolSettingsView: React.FC<SchoolSettingsViewProps> = ({ currentU
               </select>
             </div>
           </div>
+
+          <label className="flex items-center gap-2 pt-1 text-xs text-gray-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={syncAcademicToClasses}
+              onChange={(e) => setSyncAcademicToClasses(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-emerald-700 focus:ring-emerald-500"
+            />
+            <span>
+              Terapkan perubahan <strong>Tahun Ajaran &amp; Semester</strong> ke seluruh data kelas aktif secara otomatis saat disimpan.
+            </span>
+          </label>
         </div>
 
         <div className="flex justify-between items-center pt-2">

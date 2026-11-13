@@ -1,26 +1,21 @@
 import React, { useState, useMemo } from 'react';
-import { User, Student } from '../types';
+import { User } from '../types';
 import { dbService } from '../services/db';
 import {
   calculateSavingsBalance,
   calculateInfakTotal,
   calculateAttendanceSummary,
-  calculateAverage,
   formatIDR,
 } from '../utils/gradeCalculations';
+import { formatPasswordDisplay } from '../utils/dbSanitizer';
+import { buildReportDocumentData, downloadReportPdf } from '../utils/pdfExport';
 import {
   Printer,
   Download,
-  FileText,
-  School,
-  CheckCircle2,
-  Calendar,
-  Award,
-  Wallet,
-  HeartHandshake,
-  ClipboardList,
   X,
-  ArrowLeft,
+  RefreshCw,
+  AlertCircle,
+  Check,
 } from 'lucide-react';
 
 interface ReportPrintingProps {
@@ -77,22 +72,75 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
   const currentClassObj =
     classes.find((c) => c.id === (currentStudentObj?.classId || selectedClassId)) || classes[0];
 
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [printStatusMsg, setPrintStatusMsg] = useState('');
+  const [printBlockedNotice, setPrintBlockedNotice] = useState(false);
+
+  const reportDoc = useMemo(
+    () =>
+      buildReportDocumentData({
+        db,
+        reportType,
+        isAdmin,
+        student: currentStudentObj,
+        classObj: currentClassObj,
+        semesterType,
+      }),
+    [db, reportType, isAdmin, currentStudentObj, currentClassObj, semesterType]
+  );
+
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true);
+    setPrintStatusMsg('');
+    setPrintBlockedNotice(false);
+    try {
+      await downloadReportPdf(reportDoc);
+      setPrintStatusMsg(`Berkas PDF "${reportDoc.filename}" berhasil diunduh!`);
+      setTimeout(() => setPrintStatusMsg(''), 4000);
+    } catch (err) {
+      console.error('PDF generation failed:', err);
+      setPrintBlockedNotice(true);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   const handlePrint = () => {
-    window.print();
+    setPrintBlockedNotice(false);
+    setPrintStatusMsg('');
+    let didTriggerPrintDialog = false;
+    const onBeforePrint = () => {
+      didTriggerPrintDialog = true;
+    };
+    window.addEventListener('beforeprint', onBeforePrint, { once: true });
+
+    try {
+      window.focus();
+      window.print();
+    } catch {
+      didTriggerPrintDialog = false;
+    }
+
+    setTimeout(() => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      if (!didTriggerPrintDialog) {
+        setPrintBlockedNotice(true);
+      }
+    }, 600);
   };
 
   return (
     <div className="space-y-6">
       {/* Configuration bar (Hidden when printing via CSS @media print) */}
       <div className="print:hidden space-y-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-gray-200 shadow-sm">
+        <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-gray-200 shadow-sm">
           <div>
             <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
               <Printer className="w-6 h-6 text-emerald-700" />
               <span>Cetak Laporan & Unduh Berkas PDF</span>
             </h2>
             <p className="text-xs text-gray-500 mt-1">
-              Format cetak rapi berstandar resmi MI Nurul Falah Bandung dengan Kop Surat, data identitas, dan tanda tangan.
+              Format cetak rapi berstandar resmi MI Nurul Falah dengan Kop Surat, data identitas, dan tanda tangan.
             </p>
           </div>
 
@@ -111,14 +159,58 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
 
             <button
               type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="px-4 py-2.5 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-amber-600 cursor-pointer disabled:opacity-60"
+            >
+              {isDownloadingPdf ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>{isDownloadingPdf ? 'Membuat PDF...' : 'UNDUH BERKAS PDF'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handlePrint}
               className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center gap-2 shrink-0 border-b-2 border-emerald-950 cursor-pointer"
             >
               <Printer className="w-4 h-4 text-amber-300" />
-              <span>CETAK / SIMPAN PDF SEKARANG</span>
+              <span>CETAK LANGSUNG</span>
             </button>
           </div>
         </div>
+
+        {printStatusMsg && (
+          <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-2xl text-xs font-bold flex items-center gap-2">
+            <Check className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span>{printStatusMsg}</span>
+          </div>
+        )}
+
+        {printBlockedNotice && (
+          <div className="bg-amber-50 border-2 border-amber-300 text-amber-950 px-4 py-3.5 rounded-2xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Dialog cetak browser tidak terbuka di tampilan ini (misal preview HP/iPhone).</p>
+                <p className="text-amber-900 mt-0.5">
+                  Gunakan tombol <strong>Unduh Berkas PDF</strong> untuk langsung menyimpan dokumen A4 siap cetak ke HP atau komputer Anda.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer self-start sm:self-center"
+            >
+              <Download className="w-4 h-4 text-amber-300" />
+              <span>Unduh PDF Sekarang</span>
+            </button>
+          </div>
+        )}
 
         {/* Report Type Selectors */}
         <div className="bg-white p-4 rounded-3xl border border-gray-200 shadow-sm space-y-3">
@@ -296,9 +388,9 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
             </p>
           </div>
 
-          <div className="w-20 hidden sm:block shrink-0 text-center">
-            <span className="text-[10px] font-black uppercase text-emerald-900 bg-amber-200/80 px-2 py-1 rounded">
-              AKREDITASI A
+          <div className="hidden sm:flex shrink-0 items-center justify-end">
+            <span className="text-[10px] font-black uppercase text-emerald-900 bg-amber-200/80 px-2.5 py-1 rounded whitespace-nowrap">
+              AKREDITASI B
             </span>
           </div>
         </div>
@@ -382,42 +474,49 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
                 </tr>
               </thead>
               <tbody>
-                {subjects.map((subj, idx) => {
-                  const g = db.semesterGrades.find(
-                    (sg) =>
-                      sg.studentId === currentStudentObj?.id &&
-                      sg.subjectId === subj.id &&
-                      sg.type === semesterType
+                {(() => {
+                  const classSubjects = subjects.filter(
+                    (s) => !s.classId || s.classId === currentClassObj?.id
                   );
-                  const kkm = subj.kkm || 75;
+                  const list = classSubjects.length > 0 ? classSubjects : subjects;
+                  return list.map((subj, idx) => {
+                    const g = db.semesterGrades.find(
+                      (sg) =>
+                        sg.studentId === currentStudentObj?.id &&
+                        sg.subjectId === subj.id &&
+                        sg.type === semesterType &&
+                        (isAdmin || sg.isReleased)
+                    );
+                    const kkm = subj.kkm || db.settings.defaultKkm || 75;
 
-                  return (
-                    <tr key={subj.id} className="border-b border-gray-200">
-                      <td className="py-2 px-3 border border-gray-300 text-center font-bold">
-                        {idx + 1}
-                      </td>
-                      <td className="py-2 px-3 border border-gray-300 font-semibold text-gray-900">
-                        {subj.name}
-                      </td>
-                      <td className="py-2 px-3 border border-gray-300 text-center font-mono">{kkm}</td>
-                      <td className="py-2 px-3 border border-gray-300 text-center font-mono font-bold text-sm">
-                        {g ? g.score : '-'}
-                      </td>
-                      <td className="py-2 px-3 border border-gray-300 text-center font-bold">
-                        {g ? (
-                          <span className={g.status === 'TUNTAS' ? 'text-emerald-800' : 'text-amber-800'}>
-                            {g.status}
-                          </span>
-                        ) : (
-                          '-'
-                        )}
-                      </td>
-                      <td className="py-2 px-3 border border-gray-300 text-gray-700 italic">
-                        {g?.notes || '-'}
-                      </td>
-                    </tr>
-                  );
-                })}
+                    return (
+                      <tr key={subj.id} className="border-b border-gray-200">
+                        <td className="py-2 px-3 border border-gray-300 text-center font-bold">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2 px-3 border border-gray-300 font-semibold text-gray-900">
+                          {subj.name}
+                        </td>
+                        <td className="py-2 px-3 border border-gray-300 text-center font-mono">{kkm}</td>
+                        <td className="py-2 px-3 border border-gray-300 text-center font-mono font-bold text-sm">
+                          {g ? g.score : '-'}
+                        </td>
+                        <td className="py-2 px-3 border border-gray-300 text-center font-bold">
+                          {g ? (
+                            <span className={g.status === 'TUNTAS' ? 'text-emerald-800' : 'text-amber-800'}>
+                              {g.status}
+                            </span>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="py-2 px-3 border border-gray-300 text-gray-700 italic">
+                          {g?.notes || '-'}
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>
@@ -439,7 +538,7 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
               </thead>
               <tbody>
                 {db.dailyGrades
-                  .filter((g) => g.studentId === currentStudentObj?.id)
+                  .filter((g) => g.studentId === currentStudentObj?.id && (isAdmin || g.isReleased))
                   .map((g, idx) => {
                     const subj = subjects.find((s) => s.id === g.subjectId);
                     return (
@@ -705,7 +804,7 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
                         {acc?.username || '-'}
                       </td>
                       <td className="py-2 px-3 border border-gray-300 font-mono font-bold text-amber-800">
-                        {acc?.password || '-'}
+                        {acc ? formatPasswordDisplay(acc.password) : '-'}
                       </td>
                     </tr>
                   );
@@ -729,7 +828,6 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
 
           <div className="text-center space-y-16">
             <p className="text-gray-600 font-medium">
-              Bandung,{' '}
               {new Date().toLocaleDateString('id-ID', {
                 day: 'numeric',
                 month: 'long',
@@ -746,13 +844,13 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
         </div>
       </div>
 
-      {/* Floating Bottom Quick Print & Close Bar (Hidden during @media print) */}
-      <div className="print:hidden fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-emerald-950/95 text-white p-2.5 rounded-2xl shadow-2xl border-2 border-amber-400 backdrop-blur-md animate-in fade-in slide-in-from-bottom-4">
+      {/* Floating Bottom Quick Print, PDF & Close Bar (Hidden during @media print) */}
+      <div className="print:hidden fixed bottom-20 lg:bottom-6 right-3 sm:right-6 z-40 flex items-center gap-2 bg-emerald-950/95 text-white p-2 sm:p-2.5 rounded-2xl shadow-2xl border-2 border-amber-400 backdrop-blur-md animate-in fade-in slide-in-from-bottom-4">
         {onClose && (
           <button
             type="button"
             onClick={onClose}
-            className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+            className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
             title="Tutup halaman cetak dan kembali ke dasbor"
           >
             <X className="w-4 h-4" />
@@ -761,12 +859,26 @@ export const ReportPrinting: React.FC<ReportPrintingProps> = ({ currentUser, onC
         )}
         <button
           type="button"
+          onClick={handleDownloadPdf}
+          disabled={isDownloadingPdf}
+          className="px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-950 font-black text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-60"
+          title="Unduh file PDF resmi MI Nurul Falah"
+        >
+          {isDownloadingPdf ? (
+            <RefreshCw className="w-4 h-4 animate-spin text-emerald-700" />
+          ) : (
+            <Download className="w-4 h-4 text-emerald-700" />
+          )}
+          <span>{isDownloadingPdf ? 'PDF...' : 'Unduh PDF'}</span>
+        </button>
+        <button
+          type="button"
           onClick={handlePrint}
-          className="px-4 py-2 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+          className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-emerald-950 font-black text-xs rounded-xl transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
           title="Buka dialog cetak browser atau simpan PDF"
         >
           <Printer className="w-4 h-4" />
-          <span>Cetak Dokumen Ini</span>
+          <span>Cetak Dokumen</span>
         </button>
       </div>
     </div>

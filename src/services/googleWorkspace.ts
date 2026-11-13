@@ -82,6 +82,9 @@ export async function exportGradesToGoogleSheets(
   }
 
   const cls = db.classes.find((c) => c.id === classId) || db.classes[0];
+  if (!cls) {
+    throw new Error('Belum ada kelas yang terdaftar untuk diekspor.');
+  }
   const students = db.students.filter((s) => s.classId === cls.id);
   const subjects = db.subjects.filter((s) => s.classId === cls.id || s.classId === 'semua');
 
@@ -163,23 +166,24 @@ export async function exportGradesToGoogleSheets(
 }
 
 /**
- * Backs up entire database to Google Drive as a JSON file.
+ * Backs up entire database to Google Drive as a JSON file and returns webViewLink.
  */
 export async function backupDatabaseToGoogleDrive(
   db: AppDatabase
-): Promise<{ fileId: string; fileName: string }> {
+): Promise<{ fileId: string; fileName: string; webViewLink: string }> {
   const token = getGoogleAccessToken();
   if (!token) {
     throw new Error('Silakan login dengan Akun Google terlebih dahulu.');
   }
 
-  const fileName = `Backup_${db.settings.schoolName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.json`;
+  const timestamp = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+  const fileName = `Backup_${db.settings.schoolName.replace(/\s+/g, '_')}_${timestamp}.json`;
   const fileContent = JSON.stringify(db, null, 2);
 
   const metadata = {
     name: fileName,
     mimeType: 'application/json',
-    description: `Cadangan data otomatis ${db.settings.schoolName}`,
+    description: `Cadangan data otomatis ${db.settings.schoolName} (Akun Admin, Akun Wali Murid, Data Siswa, Nilai, Keuangan, Absensi)`,
   };
 
   const form = new FormData();
@@ -190,7 +194,7 @@ export async function backupDatabaseToGoogleDrive(
   form.append('file', new Blob([fileContent], { type: 'application/json' }));
 
   const res = await fetch(
-    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
     {
       method: 'POST',
       headers: {
@@ -208,6 +212,7 @@ export async function backupDatabaseToGoogleDrive(
   const data = await res.json();
   return {
     fileId: data.id,
-    fileName: data.name,
+    fileName: data.name || fileName,
+    webViewLink: data.webViewLink || `https://drive.google.com/file/d/${data.id}/view`,
   };
 }

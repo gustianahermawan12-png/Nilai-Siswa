@@ -3,11 +3,11 @@ import { dbService } from '../services/db';
 import {
   signInWithGoogle,
   signOutGoogle,
-  getGoogleAccessToken,
   initGoogleAuth,
   exportGradesToGoogleSheets,
   backupDatabaseToGoogleDrive,
 } from '../services/googleWorkspace';
+import { getShareableAppUrl } from '../utils/dbSanitizer';
 import {
   FileSpreadsheet,
   Cloud,
@@ -16,10 +16,10 @@ import {
   Download,
   Upload,
   ExternalLink,
-  X,
-  Sparkles,
   Database,
-  Lock,
+  Share2,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface GoogleIntegrationModalProps {
@@ -28,18 +28,27 @@ interface GoogleIntegrationModalProps {
 
 export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ onClose }) => {
   const db = dbService.getSnapshot();
-  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [selectedClassId, setSelectedClassId] = useState<string>(db.classes[0]?.id || 'cls-1');
+  const [googleUser, setGoogleUser] = useState<{ displayName?: string | null; email?: string | null } | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isExportingSheets, setIsExportingSheets] = useState(false);
   const [isBackingUpDrive, setIsBackingUpDrive] = useState(false);
   const [sheetResult, setSheetResult] = useState<{ spreadsheetUrl: string } | null>(null);
-  const [driveResult, setDriveResult] = useState<{ fileName: string } | null>(null);
+  const [driveResult, setDriveResult] = useState<{
+    fileId: string;
+    fileName: string;
+    webViewLink: string;
+  } | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [copiedShareLink, setCopiedShareLink] = useState(false);
+
+  const shareUrl =
+    typeof window !== 'undefined' ? getShareableAppUrl(window.location.origin) : '';
 
   useEffect(() => {
     const unsubscribe = initGoogleAuth(
-      (user, token) => {
+      (user) => {
         setGoogleUser(user);
       },
       () => {
@@ -59,8 +68,8 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
         setGoogleUser(result.user);
         setStatusMessage('Berhasil terhubung dengan Akun Google!');
       }
-    } catch (e: any) {
-      setErrorMessage(e.message || 'Gagal login dengan Google.');
+    } catch (e: unknown) {
+      setErrorMessage(e instanceof Error ? e.message : 'Gagal login dengan Google.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -71,11 +80,11 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
     setErrorMessage('');
     setSheetResult(null);
     try {
-      const res = await exportGradesToGoogleSheets(db, 'cls-1');
+      const res = await exportGradesToGoogleSheets(db, selectedClassId);
       setSheetResult(res);
       setStatusMessage('Spreadsheet nilai siswa MI Nurul Falah berhasil dibuat di Google Drive Anda!');
-    } catch (e: any) {
-      setErrorMessage(e.message || 'Gagal mengekspor ke Google Sheets.');
+    } catch (e: unknown) {
+      setErrorMessage(e instanceof Error ? e.message : 'Gagal mengekspor ke Google Sheets.');
     } finally {
       setIsExportingSheets(false);
     }
@@ -89,10 +98,22 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
       const res = await backupDatabaseToGoogleDrive(db);
       setDriveResult(res);
       setStatusMessage(`Cadangan database berhasil disimpan ke Google Drive (${res.fileName})!`);
-    } catch (e: any) {
-      setErrorMessage(e.message || 'Gagal membuat cadangan ke Google Drive.');
+    } catch (e: unknown) {
+      setErrorMessage(e instanceof Error ? e.message : 'Gagal membuat cadangan ke Google Drive.');
     } finally {
       setIsBackingUpDrive(false);
+    }
+  };
+
+  const handleCopyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedShareLink(true);
+      setStatusMessage('Link portal aplikasi siap share berhasil disalin ke clipboard!');
+      setTimeout(() => setCopiedShareLink(false), 2500);
+    } catch {
+      setErrorMessage(`Gagal menyalin otomatis. Salin link ini: ${shareUrl}`);
     }
   };
 
@@ -105,23 +126,24 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
     a.download = `MI_Nurul_Falah_Backup_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    setStatusMessage('Cadangan data lokal (JSON) berhasil diunduh ke komputer!');
+    setStatusMessage('Cadangan data lokal (JSON) berhasil diunduh ke perangkat!');
   };
 
   const handleImportLocalBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           const content = event.target?.result as string;
           const ok = dbService.importDatabase(content);
           if (ok) {
-            setStatusMessage('Database berhasil dipulihkan dari file cadangan!');
+            await dbService.saveAndSyncNow();
+            setStatusMessage('Database berhasil dipulihkan dan disinkronkan ke Cloud!');
           } else {
             setErrorMessage('Format file cadangan tidak valid.');
           }
-        } catch (err: any) {
+        } catch {
           setErrorMessage('Gagal memproses file cadangan.');
         }
       };
@@ -130,24 +152,31 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white rounded-3xl max-w-xl w-full shadow-2xl overflow-hidden border-t-4 border-amber-400 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="bg-white rounded-2xl sm:rounded-3xl max-w-xl w-full shadow-2xl overflow-hidden border-t-4 border-amber-400 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
         {/* Header */}
-        <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <Cloud className="w-5 h-5 text-amber-300" />
-            <h3 className="font-bold text-base">Google Workspace & Cadangan Data</h3>
+        <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Cloud className="w-5 h-5 text-amber-300 shrink-0" />
+            <h3 className="font-bold text-sm sm:text-base truncate">
+              Simpan ke Google Drive & Siap Share
+            </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-emerald-200 hover:text-white"
+            className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
           >
-            <X className="w-5 h-5" />
+            &times; Tutup
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-5">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-5 overscroll-contain touch-pan-y">
           {statusMessage && (
             <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-2xl text-xs font-semibold flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -162,6 +191,39 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
             </div>
           )}
 
+          {/* Shareable Portal URL Card */}
+          <div className="p-4 bg-blue-50/80 rounded-2xl border border-blue-200 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-blue-950">
+                <Share2 className="w-4 h-4 text-blue-600" />
+                <span>Link Portal Siap Share (Untuk Wali Murid & Guru)</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyShareUrl}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                {copiedShareLink ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Tersalin!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Salin Link</span>
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="px-3 py-2 bg-white border border-blue-200 rounded-xl text-[11px] font-mono text-blue-900 break-all select-all">
+              {shareUrl}
+            </div>
+            <p className="text-[10px] text-blue-800">
+              Bagikan link di atas ke grup WhatsApp wali murid. Akun yang dibuat admin otomatis aktif di semua HP & browser.
+            </p>
+          </div>
+
           {/* Google Account Connection Status */}
           <div className="p-4 bg-emerald-50/70 rounded-2xl border border-emerald-200">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -170,17 +232,16 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                 <p className="text-xs text-gray-600 mt-0.5">
                   {googleUser
                     ? `Terhubung sebagai: ${googleUser.displayName || googleUser.email}`
-                    : 'Belum terhubung. Masuk dengan akun Google untuk mengaktifkan sinkronisasi otomatis.'}
+                    : 'Hubungkan akun Google Anda untuk menyimpan rekap nilai & cadangan database ke Google Drive.'}
                 </p>
               </div>
 
               {!googleUser ? (
-                /* Official Sign in with Google Button Styling */
                 <button
                   type="button"
                   onClick={handleGoogleLogin}
                   disabled={isLoggingIn}
-                  className="px-4 py-2 bg-white hover:bg-gray-50 text-gray-800 text-xs font-bold rounded-xl border border-gray-300 shadow-sm transition-all flex items-center gap-2 shrink-0 hover:shadow"
+                  className="px-4 py-2 bg-white hover:bg-gray-50 text-gray-800 text-xs font-bold rounded-xl border border-gray-300 shadow-sm transition-all flex items-center gap-2 shrink-0 hover:shadow cursor-pointer"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
@@ -200,13 +261,13 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                       d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                     />
                   </svg>
-                  <span>{isLoggingIn ? 'Menghubungkan...' : 'Sign in with Google'}</span>
+                  <span>{isLoggingIn ? 'Menghubungkan...' : 'Masuk dengan Google'}</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={signOutGoogle}
-                  className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg font-semibold"
+                  className="px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg font-semibold cursor-pointer"
                 >
                   Putus Sambungan
                 </button>
@@ -225,9 +286,20 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                   </div>
                   <h4 className="font-bold text-gray-900 text-xs sm:text-sm">Google Sheets</h4>
                 </div>
-                <p className="text-[11px] text-gray-600 leading-relaxed">
-                  Ekspor rekap nilai akademik siswa, rata-rata, dan status ketuntasan langsung ke Google Spreadsheet baru di Drive Anda.
+                <p className="text-[11px] text-gray-600 leading-relaxed mb-2.5">
+                  Ekspor rekap nilai akademik siswa, rata-rata, dan ketuntasan per kelas ke Google Spreadsheet.
                 </p>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs border border-emerald-200 rounded-xl bg-emerald-50/40 font-semibold text-emerald-950 outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {db.classes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="mt-4 pt-3 border-t border-gray-100">
@@ -235,7 +307,7 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                   type="button"
                   onClick={handleExportSheets}
                   disabled={!googleUser || isExportingSheets}
-                  className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                  className="w-full py-2 bg-emerald-700 hover:bg-emerald-800 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
                   <span>{isExportingSheets ? 'Mengekspor...' : 'Ekspor ke Google Sheets'}</span>
@@ -245,9 +317,9 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                     href={sheetResult.spreadsheetUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-2 text-xs font-bold text-emerald-700 hover:underline flex items-center justify-center gap-1"
+                    className="mt-2 py-1.5 px-2 bg-emerald-50 rounded-lg text-xs font-bold text-emerald-800 hover:underline flex items-center justify-center gap-1 border border-emerald-200"
                   >
-                    <span>Buka Spreadsheet</span>
+                    <span>Buka Spreadsheet di Drive</span>
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                 )}
@@ -264,7 +336,7 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                   <h4 className="font-bold text-gray-900 text-xs sm:text-sm">Google Drive</h4>
                 </div>
                 <p className="text-[11px] text-gray-600 leading-relaxed">
-                  Simpan cadangan lengkap database MI Nurul Falah (data siswa, nilai, tabungan, infak, absensi) ke folder Google Drive pribadi.
+                  Simpan cadangan lengkap database MI Nurul Falah (akun wali murid, siswa, nilai, tabungan, infak, absensi) ke Google Drive Anda.
                 </p>
               </div>
 
@@ -273,11 +345,22 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
                   type="button"
                   onClick={handleBackupDrive}
                   disabled={!googleUser || isBackingUpDrive}
-                  className="w-full py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                  className="w-full py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-gray-200 disabled:text-gray-400 text-white text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <Cloud className="w-3.5 h-3.5" />
-                  <span>{isBackingUpDrive ? 'Menyimpan...' : 'Cadangkan ke Google Drive'}</span>
+                  <span>{isBackingUpDrive ? 'Menyimpan...' : 'Simpan Backup ke Google Drive'}</span>
                 </button>
+                {driveResult && (
+                  <a
+                    href={driveResult.webViewLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 py-1.5 px-2 bg-amber-50 rounded-lg text-xs font-bold text-amber-900 hover:underline flex items-center justify-center gap-1 border border-amber-200"
+                  >
+                    <span>Buka File Backup di Google Drive</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -296,7 +379,7 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
               <button
                 type="button"
                 onClick={handleDownloadLocalBackup}
-                className="px-3.5 py-2 bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 bg-white hover:bg-gray-100 text-gray-800 border border-gray-300 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <Download className="w-4 h-4 text-emerald-700" />
                 <span>Unduh File Cadangan (JSON)</span>
@@ -316,13 +399,13 @@ export const GoogleIntegrationModal: React.FC<GoogleIntegrationModalProps> = ({ 
           </div>
         </div>
 
-        <div className="p-4 bg-gray-50 border-t border-gray-200 flex justify-end">
+        <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 bg-emerald-800 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors"
+            className="px-5 py-2 bg-emerald-800 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition-colors cursor-pointer"
           >
-            Selesai
+            Tutup & Selesai
           </button>
         </div>
       </div>

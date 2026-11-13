@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { Student, ClassGroup } from '../types';
 import { dbService } from '../services/db';
+import { hashPassword } from '../utils/security';
+import { compressImageFile } from '../utils/imageHelper';
+import {
+  validateCredentialsInput,
+  formatPasswordDisplay,
+} from '../utils/dbSanitizer';
 import {
   Users,
   Plus,
@@ -14,10 +20,11 @@ import {
   KeyRound,
   ShieldAlert,
   GraduationCap,
-  Sparkles,
   School,
   UserCheck,
-  BookOpen,
+  AlertCircle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface StudentManagementProps {
@@ -53,7 +60,10 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
   const [status, setStatus] = useState<'aktif' | 'nonaktif'>('aktif');
   const [createWaliLogin, setCreateWaliLogin] = useState(true);
   const [waliUsername, setWaliUsername] = useState('');
-  const [waliPassword, setWaliPassword] = useState('wali123');
+  const [waliPassword, setWaliPassword] = useState('');
+  const [showWaliPassword, setShowWaliPassword] = useState(true);
+  const [studentFormError, setStudentFormError] = useState('');
+  const [isSavingStudent, setIsSavingStudent] = useState(false);
 
   // Delete student confirmation
   const [studentToDelete, setStudentToDelete] = useState<Student | null>(null);
@@ -81,7 +91,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 3000);
+    setTimeout(() => setToastMsg(''), 3500);
   };
 
   const handleOpenAddClass = () => {
@@ -111,7 +121,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
     setIsClassModalOpen(true);
   };
 
-  const handleSaveClass = (e: React.FormEvent) => {
+  const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!classNameInput.trim() || !homeroomTeacherInput.trim()) return;
 
@@ -122,6 +132,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
         academicYear: academicYearInput.trim(),
         semester: semesterInput,
       });
+      await dbService.saveAndSyncNow();
       showToast(`Data kelas & Wali Kelas ${classNameInput.trim()} berhasil diperbarui!`);
     } else {
       dbService.addClass({
@@ -130,16 +141,20 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
         academicYear: academicYearInput.trim(),
         semester: semesterInput,
       });
-      showToast(`Kelas ${classNameInput.trim()} dengan Wali Kelas ${homeroomTeacherInput.trim()} berhasil ditambahkan!`);
+      await dbService.saveAndSyncNow();
+      showToast(
+        `Kelas ${classNameInput.trim()} dengan Wali Kelas ${homeroomTeacherInput.trim()} berhasil ditambahkan!`
+      );
     }
     setIsClassModalOpen(false);
   };
 
-  const handleDeleteClassConfirm = () => {
+  const handleDeleteClassConfirm = async () => {
     if (!classToDelete) return;
     const clsName = classToDelete.name;
     const success = dbService.deleteClass(classToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast(`Kelas ${clsName} berhasil dihapus.`);
     }
     setClassToDelete(null);
@@ -147,6 +162,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
 
   const handleOpenAdd = () => {
     setEditingStudent(null);
+    setStudentFormError('');
     setName('');
     setNis(String(24000 + students.length + 1));
     setNisn(String(3125678900 + students.length + 1));
@@ -160,11 +176,13 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
     setCreateWaliLogin(true);
     setWaliUsername(`wali_siswa${students.length + 1}`);
     setWaliPassword('wali123');
+    setShowWaliPassword(true);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (std: Student) => {
     setEditingStudent(std);
+    setStudentFormError('');
     setName(std.name);
     setNis(std.nis);
     setNisn(std.nisn);
@@ -179,76 +197,127 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
     setIsModalOpen(true);
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setPhotoUrl(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 420, 0.72);
+      setPhotoUrl(compressed);
+    } catch {
+      setStudentFormError('Gagal memproses foto dari galeri. Coba gambar lain.');
     }
   };
 
-  const handleSaveStudent = (e: React.FormEvent) => {
+  const handleSaveStudent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    setStudentFormError('');
+    if (!name.trim()) {
+      setStudentFormError('Nama lengkap siswa wajib diisi.');
+      return;
+    }
 
-    if (editingStudent) {
-      dbService.updateStudent(editingStudent.id, {
-        name: name.trim(),
-        nis: nis.trim(),
-        nisn: nisn.trim(),
-        gender,
-        classId,
-        parentName: parentName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
-        photoUrl,
-        status,
+    // Validate wali credentials BEFORE creating student so there is no partial orphan student
+    let validatedCreds: { cleanUsername: string; cleanPassword: string } | null = null;
+    if (!editingStudent && createWaliLogin) {
+      const check = validateCredentialsInput({
+        username: waliUsername,
+        password: waliPassword,
+        requirePassword: true,
+        minPasswordLength: 4,
       });
-      showToast(`Data siswa "${name}" berhasil diperbarui.`);
-    } else {
-      const newStudent = dbService.addStudent({
-        name: name.trim(),
-        nis: nis.trim(),
-        nisn: nisn.trim(),
-        gender,
-        classId,
-        parentName: parentName.trim(),
-        phone: phone.trim(),
-        address: address.trim(),
-        photoUrl,
-        status,
-      });
+      if (!check.valid) {
+        setStudentFormError(check.error || 'Username atau kata sandi wali murid tidak valid.');
+        return;
+      }
+      const isAvail = dbService.checkUsernameAvailable(check.cleanUsername);
+      if (!isAvail) {
+        setStudentFormError(
+          `Nama pengguna "${check.cleanUsername}" sudah terpakai. Silakan ganti username wali murid.`
+        );
+        return;
+      }
+      validatedCreds = {
+        cleanUsername: check.cleanUsername,
+        cleanPassword: check.cleanPassword,
+      };
+    }
 
-      // Optionally create Wali Murid login account simultaneously
-      if (createWaliLogin && waliUsername.trim()) {
-        const newWaliUser = dbService.addUser({
-          username: waliUsername.trim().toLowerCase(),
-          password: waliPassword.trim() || 'wali123',
-          role: 'wali_murid',
-          name: parentName.trim() || `Wali dari ${name.trim()}`,
-          title: `Wali Murid - ${name.trim()}`,
-          linkedStudentId: newStudent.id,
+    setIsSavingStudent(true);
+    try {
+      if (editingStudent) {
+        dbService.updateStudent(editingStudent.id, {
+          name: name.trim(),
+          nis: nis.trim(),
+          nisn: nisn.trim(),
+          gender,
+          classId,
+          parentName: parentName.trim(),
           phone: phone.trim(),
+          address: address.trim(),
+          photoUrl,
+          status,
         });
-        dbService.updateStudent(newStudent.id, { waliMuridId: newWaliUser.id });
+      } else {
+        const newStudent = dbService.addStudent({
+          name: name.trim(),
+          nis: nis.trim(),
+          nisn: nisn.trim(),
+          gender,
+          classId,
+          parentName: parentName.trim(),
+          phone: phone.trim(),
+          address: address.trim(),
+          photoUrl,
+          status,
+        });
+
+        if (validatedCreds) {
+          const hashed = await hashPassword(validatedCreds.cleanPassword);
+          const newWaliUser = dbService.addUser({
+            username: validatedCreds.cleanUsername,
+            password: hashed,
+            role: 'wali_murid',
+            name: parentName.trim() || `Wali dari ${name.trim()}`,
+            title: `Wali Murid - ${name.trim()}`,
+            linkedStudentId: newStudent.id,
+            phone: phone.trim(),
+            securityQuestion: 'Nama ibu kandung?',
+            securityAnswer: 'Ibu',
+            status: 'aktif',
+          });
+          dbService.updateStudent(newStudent.id, { waliMuridId: newWaliUser.id });
+        }
       }
 
-      showToast(`Siswa "${name}" berhasil didaftarkan.`);
-    }
+      const syncRes = await dbService.saveAndSyncNow();
+      if (!syncRes.ok) {
+        setStudentFormError(
+          `Data tersimpan lokal, tetapi gagal sinkron ke Cloud: ${syncRes.error || 'Coba lagi.'}`
+        );
+        return;
+      }
 
-    setIsModalOpen(false);
+      showToast(
+        editingStudent
+          ? `Data siswa "${name.trim()}" berhasil diperbarui & tersimpan ke Cloud!`
+          : `Siswa "${name.trim()}"${validatedCreds ? ` beserta akun "${validatedCreds.cleanUsername}"` : ''} berhasil didaftarkan!`
+      );
+      setIsModalOpen(false);
+    } catch (err: unknown) {
+      setStudentFormError(
+        err instanceof Error ? err.message : 'Terjadi kesalahan saat menyimpan data siswa.'
+      );
+    } finally {
+      setIsSavingStudent(false);
+    }
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!studentToDelete) return;
     const deletedName = studentToDelete.name;
     const success = dbService.deleteStudent(studentToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast(`Siswa "${deletedName}" berhasil dihapus.`);
     }
     setStudentToDelete(null);
@@ -441,7 +510,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                               {std.name}
                             </span>
                             <span className="text-[10px] text-gray-500 font-medium">
-                              {std.gender === 'L' ? 'Laki-laki' : 'Perempuan'} &bull; {std.address || 'Bandung'}
+                              {std.gender === 'L' ? 'Laki-laki' : 'Perempuan'} &bull; {std.address || 'Alamat belum diisi'}
                             </span>
                           </div>
                         </div>
@@ -470,7 +539,7 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
                               {waliAccount.username}
                             </span>
                             <div className="text-[10px] text-gray-500 font-mono">
-                              Sandi: {waliAccount.password}
+                              Sandi: {formatPasswordDisplay(waliAccount.password)}
                             </div>
                           </div>
                         ) : (
@@ -737,270 +806,306 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
 
       {/* Add / Edit Student Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between shrink-0">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <Users className="w-5 h-5 text-amber-300" />
-                <span>{editingStudent ? 'Edit Data Siswa' : 'Tambah Siswa Baru'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSavingStudent) setIsModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <Users className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">{editingStudent ? 'Edit Data Siswa' : 'Tambah Siswa Baru'}</span>
               </h3>
               <button
                 type="button"
+                disabled={isSavingStudent}
                 onClick={() => setIsModalOpen(false)}
-                className="text-emerald-200 hover:text-white p-1 rounded-lg"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveStudent} className="p-6 overflow-y-auto space-y-4">
-              {/* Photo picker */}
-              <div className="flex items-center gap-4 p-3 bg-emerald-50/60 rounded-2xl border border-emerald-200/60">
-                <div className="relative">
-                  {photoUrl ? (
-                    <img
-                      src={photoUrl}
-                      alt="Pratinjau"
-                      className="w-16 h-16 rounded-xl object-cover border-2 border-emerald-600 bg-white"
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-xl bg-emerald-200 text-emerald-800 flex items-center justify-center font-bold text-xl">
-                      Foto
-                    </div>
-                  )}
-                  <label
-                    htmlFor="student-photo"
-                    className="absolute -bottom-1 -right-1 p-1 bg-amber-400 text-emerald-950 rounded-full shadow cursor-pointer hover:scale-110 transition-transform"
-                    title="Pilih foto dari galeri HP/PC"
-                  >
-                    <Camera className="w-3.5 h-3.5" />
+            <form onSubmit={handleSaveStudent} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
+                {studentFormError && (
+                  <div className="p-3 bg-red-50 border border-red-300 rounded-xl text-xs text-red-700 flex items-start gap-2 font-semibold">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <span>{studentFormError}</span>
+                  </div>
+                )}
+
+                {/* Photo picker */}
+                <div className="flex items-center gap-4 p-3 bg-emerald-50/60 rounded-2xl border border-emerald-200/60">
+                  <div className="relative">
+                    {photoUrl ? (
+                      <img
+                        src={photoUrl}
+                        alt="Pratinjau"
+                        className="w-16 h-16 rounded-xl object-cover border-2 border-emerald-600 bg-white"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-xl bg-emerald-200 text-emerald-800 flex items-center justify-center font-bold text-xl">
+                        Foto
+                      </div>
+                    )}
+                    <label
+                      htmlFor="student-photo"
+                      className="absolute -bottom-1 -right-1 p-1 bg-amber-400 text-emerald-950 rounded-full shadow cursor-pointer hover:scale-110 transition-transform"
+                      title="Pilih foto dari galeri HP/PC"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                      <input
+                        id="student-photo"
+                        type="file"
+                        accept="image/*"
+                        onChange={handlePhotoUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-emerald-950">Foto Siswa</p>
+                    <p className="text-[11px] text-gray-500">
+                      Pilih file foto siswa langsung dari galeri HP atau komputer.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Nama Lengkap Siswa <span className="text-red-500">*</span>
+                    </label>
                     <input
-                      id="student-photo"
-                      type="file"
-                      accept="image/*"
-                      onChange={handlePhotoUpload}
-                      className="hidden"
+                      type="text"
+                      required
+                      value={name}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        if (!editingStudent && createWaliLogin) {
+                          const simple = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '');
+                          if (simple) setWaliUsername(`wali_${simple.slice(0, 12)}`);
+                        }
+                      }}
+                      placeholder="Contoh: Ahmad Zaki Pratama"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
                     />
-                  </label>
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-emerald-950">Foto Siswa</p>
-                  <p className="text-[11px] text-gray-500">
-                    Pilih file foto siswa langsung dari galeri HP atau komputer.
-                  </p>
-                </div>
-              </div>
+                  </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Nama Lengkap Siswa <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      if (!editingStudent && createWaliLogin) {
-                        const simple = e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '');
-                        if (simple) setWaliUsername(`wali_${simple.slice(0, 10)}`);
-                      }
-                    }}
-                    placeholder="Contoh: Ahmad Zaki Pratama"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-medium"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Kelas <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={classId}
-                    onChange={(e) => setClassId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} (Wali: {c.homeroomTeacher})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Nomor Induk Siswa (NIS) <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={nis}
-                    onChange={(e) => setNis(e.target.value)}
-                    placeholder="24001"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    NISN (Nomor Nasional)
-                  </label>
-                  <input
-                    type="text"
-                    value={nisn}
-                    onChange={(e) => setNisn(e.target.value)}
-                    placeholder="3125678901"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Jenis Kelamin
-                  </label>
-                  <div className="flex gap-4 pt-1">
-                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="gender"
-                        checked={gender === 'L'}
-                        onChange={() => setGender('L')}
-                        className="text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span>Laki-laki (L)</span>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Kelas <span className="text-red-500">*</span>
                     </label>
-                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="gender"
-                        checked={gender === 'P'}
-                        onChange={() => setGender('P')}
-                        className="text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span>Perempuan (P)</span>
+                    <select
+                      value={classId}
+                      onChange={(e) => setClassId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} (Wali: {c.homeroomTeacher})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Nomor Induk Siswa (NIS) <span className="text-red-500">*</span>
                     </label>
+                    <input
+                      type="text"
+                      required
+                      value={nis}
+                      onChange={(e) => setNis(e.target.value)}
+                      placeholder="24001"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      NISN (Nomor Nasional)
+                    </label>
+                    <input
+                      type="text"
+                      value={nisn}
+                      onChange={(e) => setNisn(e.target.value)}
+                      placeholder="3125678901"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Jenis Kelamin
+                    </label>
+                    <div className="flex gap-4 pt-1">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="gender"
+                          checked={gender === 'L'}
+                          onChange={() => setGender('L')}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>Laki-laki (L)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="gender"
+                          checked={gender === 'P'}
+                          onChange={() => setGender('P')}
+                          className="text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span>Perempuan (P)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Status Siswa
+                    </label>
+                    <select
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value as 'aktif' | 'nonaktif')}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      <option value="aktif">Aktif</option>
+                      <option value="nonaktif">Non-aktif / Pindah</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Nama Orang Tua / Wali
+                    </label>
+                    <input
+                      type="text"
+                      value={parentName}
+                      onChange={(e) => setParentName(e.target.value)}
+                      placeholder="Contoh: Bpk. Ridwan"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Nomor WhatsApp / HP Orang Tua
+                    </label>
+                    <input
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="081234567890"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Status Siswa
+                    Alamat Tempat Tinggal
                   </label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as 'aktif' | 'nonaktif')}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    <option value="aktif">Aktif</option>
-                    <option value="nonaktif">Non-aktif / Pindah</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Nama Orang Tua / Wali
-                  </label>
-                  <input
-                    type="text"
-                    value={parentName}
-                    onChange={(e) => setParentName(e.target.value)}
-                    placeholder="Contoh: Bpk. Ridwan Kamil"
+                  <textarea
+                    rows={2}
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Alamat lengkap siswa..."
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Nomor WhatsApp / HP Orang Tua
-                  </label>
-                  <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="081234567890"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  />
-                </div>
+                {/* Automatic Wali Murid Account Creation for new students */}
+                {!editingStudent && (
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-300 space-y-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={createWaliLogin}
+                        onChange={(e) => setCreateWaliLogin(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                      />
+                      <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-amber-700" />
+                        Buat Akun Login Wali Murid Secara Otomatis
+                      </span>
+                    </label>
+
+                    {createWaliLogin && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 uppercase mb-1">
+                            Nama Pengguna (Username)
+                          </label>
+                          <input
+                            type="text"
+                            required={createWaliLogin}
+                            value={waliUsername}
+                            onChange={(e) => setWaliUsername(e.target.value)}
+                            placeholder="wali_ahmad"
+                            className="w-full px-3 py-1.5 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 uppercase mb-1">
+                            Kata Sandi (Password)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type={showWaliPassword ? 'text' : 'password'}
+                              required={createWaliLogin}
+                              value={waliPassword}
+                              onChange={(e) => setWaliPassword(e.target.value)}
+                              placeholder="Minimal 4 karakter"
+                              className="w-full pl-3 pr-9 py-1.5 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowWaliPassword(!showWaliPassword)}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-amber-700 hover:text-amber-900"
+                            >
+                              {showWaliPassword ? (
+                                <EyeOff className="w-3.5 h-3.5" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Alamat Tempat Tinggal
-                </label>
-                <textarea
-                  rows={2}
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Jl. Pesantren No. 12, Cisaranten..."
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              {/* Automatic Wali Murid Account Creation for new students */}
-              {!editingStudent && (
-                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-300 space-y-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={createWaliLogin}
-                      onChange={(e) => setCreateWaliLogin(e.target.checked)}
-                      className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
-                    />
-                    <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
-                      <KeyRound className="w-3.5 h-3.5 text-amber-700" />
-                      Buat Akun Login Wali Murid Secara Otomatis
-                    </span>
-                  </label>
-
-                  {createWaliLogin && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <label className="block text-[11px] font-bold text-amber-900 uppercase mb-1">
-                          Nama Pengguna (Username)
-                        </label>
-                        <input
-                          type="text"
-                          required={createWaliLogin}
-                          value={waliUsername}
-                          onChange={(e) => setWaliUsername(e.target.value)}
-                          placeholder="wali_ahmad"
-                          className="w-full px-3 py-1.5 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-amber-900 uppercase mb-1">
-                          Kata Sandi (Password)
-                        </label>
-                        <input
-                          type="text"
-                          required={createWaliLogin}
-                          value={waliPassword}
-                          onChange={(e) => setWaliPassword(e.target.value)}
-                          placeholder="wali123"
-                          className="w-full px-3 py-1.5 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-mono"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
+                  disabled={isSavingStudent}
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  disabled={isSavingStudent}
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950 disabled:opacity-60"
                 >
-                  <Check className="w-4 h-4" />
-                  <span>{editingStudent ? 'Simpan Perubahan' : 'Daftarkan Siswa'}</span>
+                  <Check className="w-4 h-4 text-amber-300" />
+                  <span>
+                    {isSavingStudent
+                      ? 'Menyimpan...'
+                      : editingStudent
+                      ? 'Simpan Perubahan'
+                      : 'Simpan & Daftarkan Siswa'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1042,119 +1147,128 @@ export const StudentManagement: React.FC<StudentManagementProps> = ({
       )}
       {/* Modal Add / Edit Class & Wali Kelas */}
       {isClassModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <School className="w-5 h-5 text-amber-300" />
-                <span>{editingClass ? 'Ubah Rombel & Wali Kelas' : 'Tambah Rombel & Wali Kelas Baru'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsClassModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <School className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">
+                  {editingClass ? 'Ubah Rombel & Wali Kelas' : 'Tambah Rombel & Wali Kelas Baru'}
+                </span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsClassModalOpen(false)}
-                className="text-emerald-200 hover:text-white p-1 rounded-lg"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveClass} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Nama Kelas / Rombel <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={classNameInput}
-                  onChange={(e) => setClassNameInput(e.target.value)}
-                  placeholder="Contoh: Kelas 1C / Kelas 4 / Kelas 2B"
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                />
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-bold text-gray-700 uppercase">
-                    Nama Wali Kelas / Guru Pengampu <span className="text-red-500">*</span>
-                  </label>
-                  <span className="text-[10px] text-gray-400">Dapat diketik atau pilih saran</span>
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={homeroomTeacherInput}
-                  onChange={(e) => setHomeroomTeacherInput(e.target.value)}
-                  placeholder="Contoh: Gustiana Hermawan, S.Pd."
-                  className="w-full px-3 py-2 text-xs border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-semibold text-emerald-950 bg-emerald-50/30"
-                />
-
-                {/* Suggestions chips */}
-                <div className="mt-2">
-                  <p className="text-[10px] font-bold text-gray-500 mb-1">Pilihan Cepat Guru Madrasah:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {teacherSuggestions.map((tName) => (
-                      <button
-                        key={tName}
-                        type="button"
-                        onClick={() => setHomeroomTeacherInput(tName)}
-                        className={`text-[10px] px-2 py-0.5 rounded-lg border transition-colors ${
-                          homeroomTeacherInput === tName
-                            ? 'bg-emerald-700 text-white border-emerald-800 font-bold'
-                            : 'bg-gray-100 text-gray-700 hover:bg-emerald-100 hover:text-emerald-900 border-gray-200'
-                        }`}
-                      >
-                        {tName}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveClass} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Tahun Pelajaran
+                    Nama Kelas / Rombel <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    value={academicYearInput}
-                    onChange={(e) => setAcademicYearInput(e.target.value)}
-                    placeholder="2024/2025"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    value={classNameInput}
+                    onChange={(e) => setClassNameInput(e.target.value)}
+                    placeholder="Contoh: Kelas 1C / Kelas 4 / Kelas 2B"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Semester
-                  </label>
-                  <select
-                    value={semesterInput}
-                    onChange={(e) => setSemesterInput(e.target.value as 'Ganjil' | 'Genap')}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    <option value="Ganjil">Ganjil</option>
-                    <option value="Genap">Genap</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-gray-700 uppercase">
+                      Nama Wali Kelas / Guru Pengampu <span className="text-red-500">*</span>
+                    </label>
+                    <span className="text-[10px] text-gray-400">Dapat diketik atau pilih saran</span>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={homeroomTeacherInput}
+                    onChange={(e) => setHomeroomTeacherInput(e.target.value)}
+                    placeholder="Contoh: Gustiana Hermawan, S.Pd."
+                    className="w-full px-3 py-2 text-xs border border-emerald-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-semibold text-emerald-950 bg-emerald-50/30"
+                  />
+
+                  {/* Suggestions chips */}
+                  <div className="mt-2">
+                    <p className="text-[10px] font-bold text-gray-500 mb-1">Pilihan Cepat Guru Madrasah:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {teacherSuggestions.map((tName) => (
+                        <button
+                          key={tName}
+                          type="button"
+                          onClick={() => setHomeroomTeacherInput(tName)}
+                          className={`text-[10px] px-2 py-0.5 rounded-lg border transition-colors ${
+                            homeroomTeacherInput === tName
+                              ? 'bg-emerald-700 text-white border-emerald-800 font-bold'
+                              : 'bg-gray-100 text-gray-700 hover:bg-emerald-100 hover:text-emerald-900 border-gray-200'
+                          }`}
+                        >
+                          {tName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Tahun Pelajaran
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={academicYearInput}
+                      onChange={(e) => setAcademicYearInput(e.target.value)}
+                      placeholder="2024/2025"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Semester
+                    </label>
+                    <select
+                      value={semesterInput}
+                      onChange={(e) => setSemesterInput(e.target.value as 'Ganjil' | 'Genap')}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      <option value="Ganjil">Ganjil</option>
+                      <option value="Genap">Genap</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsClassModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
-                  <span>{editingClass ? 'Simpan Perubahan' : 'Tambah Kelas'}</span>
+                  <Check className="w-4 h-4 text-amber-300" />
+                  <span>{editingClass ? 'Simpan Perubahan' : 'Simpan & Tambah Kelas'}</span>
                 </button>
               </div>
             </form>

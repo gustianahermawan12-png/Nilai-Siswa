@@ -1,6 +1,7 @@
 import { AppDatabase, SchoolSettings, User, Student, ClassGroup, Subject, ScheduleItem, DailyGrade, SemesterGrade, SavingsTransaction, InfakPayment, AttendanceRecord, ExcuseLetter, FeeItem, FeePayment, Announcement } from '../types';
 import { calculateStatus, getDateRangeArray } from '../utils/gradeCalculations';
-import { firestore, doc, setDoc, onSnapshot, getDoc } from './firebase';
+import { stripUndefined, normalizeUsername } from '../utils/dbSanitizer';
+import { firestore, doc, setDoc, onSnapshot, getDoc, getDocFromServer } from './firebase';
 
 const STORAGE_KEY = 'minurulfalah_db_v1';
 
@@ -358,9 +359,11 @@ export type SyncStatus = 'connected' | 'syncing' | 'offline' | 'error';
 class DatabaseService {
   private db: AppDatabase;
   private listeners: Set<() => void> = new Set();
-  private syncStatus: SyncStatus = 'connected';
+  private syncStatus: SyncStatus = 'syncing';
+  private syncStatusListeners: Set<(status: SyncStatus) => void> = new Set();
   private hasInitializedCloud = false;
   private unsubscribeFirestore: (() => void) | null = null;
+  private lastCloudPushPromise: Promise<{ ok: boolean; error?: string }> | null = null;
 
   constructor() {
     this.db = this.loadFromStorage();
@@ -373,11 +376,16 @@ class DatabaseService {
     return this.syncStatus;
   }
 
+  private setSyncStatus(status: SyncStatus): void {
+    this.syncStatus = status;
+    this.syncStatusListeners.forEach((fn) => fn(status));
+  }
+
   public subscribeSyncStatus(listener: (status: SyncStatus) => void): () => void {
-    const handler = () => listener(this.getSyncStatus());
-    this.listeners.add(handler);
+    this.syncStatusListeners.add(listener);
+    listener(this.syncStatus);
     return () => {
-      this.listeners.delete(handler);
+      this.syncStatusListeners.delete(listener);
     };
   }
 
@@ -387,6 +395,29 @@ class DatabaseService {
 
     try {
       const docRef = doc(firestore, 'school_data', 'main');
+
+      // Validate Firestore server connectivity on boot per Firebase integration guideline
+      getDocFromServer(docRef)
+        .then((serverSnap) => {
+          if (serverSnap.exists()) {
+            const remoteData = serverSnap.data() as AppDatabase;
+            if (remoteData && Array.isArray(remoteData.students) && Array.isArray(remoteData.users)) {
+              this.db = {
+                ...getInitialDatabase(),
+                ...remoteData,
+                settings: { ...INITIAL_SETTINGS, ...(remoteData.settings || {}) },
+              };
+              this.persistToLocalStorage(this.db);
+              this.setSyncStatus('connected');
+              this.listeners.forEach((fn) => fn());
+            }
+          }
+        })
+        .catch((err) => {
+          if (err instanceof Error && err.message.includes('the client is offline')) {
+            console.warn('Firestore server connection notice: client appears offline.');
+          }
+        });
 
       this.unsubscribeFirestore = onSnapshot(
         docRef,
@@ -400,23 +431,23 @@ class DatabaseService {
                 settings: { ...INITIAL_SETTINGS, ...(remoteData.settings || {}) },
               };
               this.persistToLocalStorage(this.db);
-              this.syncStatus = 'connected';
+              this.setSyncStatus('connected');
               this.listeners.forEach((fn) => fn());
             }
           } else {
-            // First time setup on cloud: upload initial database seed
+            // First time setup on cloud: upload clean initial database seed
             this.pushToCloud(this.db);
           }
         },
         (error) => {
           console.warn('Real-time cloud sync notice:', error);
-          this.syncStatus = 'offline';
+          this.setSyncStatus('offline');
           this.listeners.forEach((fn) => fn());
         }
       );
     } catch (err) {
       console.warn('Could not initialize cloud sync listener:', err);
-      this.syncStatus = 'offline';
+      this.setSyncStatus('offline');
     }
   }
 
@@ -427,7 +458,6 @@ class DatabaseService {
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed && Array.isArray(parsed.students) && Array.isArray(parsed.users)) {
-            // Merge settings in case new fields were added
             return {
               ...getInitialDatabase(),
               ...parsed,
@@ -454,16 +484,25 @@ class DatabaseService {
     }
   }
 
-  private async pushToCloud(data: AppDatabase) {
-    try {
-      this.syncStatus = 'syncing';
-      const docRef = doc(firestore, 'school_data', 'main');
-      await setDoc(docRef, data, { merge: true });
-      this.syncStatus = 'connected';
-    } catch (err) {
-      console.warn('Push to cloud error:', err);
-      this.syncStatus = 'offline';
-    }
+  private async pushToCloud(data: AppDatabase): Promise<{ ok: boolean; error?: string }> {
+    const previous = this.lastCloudPushPromise || Promise.resolve({ ok: true });
+    const snapshotToPush = stripUndefined(data);
+    const run = previous.then(async (): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        this.setSyncStatus('syncing');
+        const docRef = doc(firestore, 'school_data', 'main');
+        await setDoc(docRef, snapshotToPush);
+        this.setSyncStatus('connected');
+        return { ok: true };
+      } catch (err: any) {
+        const message = err?.message || 'Gagal menyinkronkan data ke database cloud.';
+        console.error('Push to cloud error:', err);
+        this.setSyncStatus('error');
+        return { ok: false, error: message };
+      }
+    });
+    this.lastCloudPushPromise = run;
+    return run;
   }
 
   public subscribe(listener: () => void): () => void {
@@ -475,15 +514,35 @@ class DatabaseService {
 
   private notify() {
     this.db.lastSync = new Date().toISOString();
+    this.db = stripUndefined(this.db);
     this.persistToLocalStorage(this.db);
     this.pushToCloud(this.db);
     this.listeners.forEach((fn) => fn());
   }
 
+  /**
+   * Forces an immediate, awaitable save to localStorage and Cloud Firestore.
+   * Use on explicit Save buttons (Accounts, Settings, Profiles) so users get verified persistence.
+   */
+  public async saveAndSyncNow(): Promise<{ ok: boolean; error?: string }> {
+    this.db.lastSync = new Date().toISOString();
+    this.db = stripUndefined(this.db);
+    this.persistToLocalStorage(this.db);
+    const result = await this.pushToCloud(this.db);
+    this.listeners.forEach((fn) => fn());
+    return result;
+  }
+
   public async syncWithCloudNow(): Promise<boolean> {
     try {
+      this.setSyncStatus('syncing');
       const docRef = doc(firestore, 'school_data', 'main');
-      const snap = await getDoc(docRef);
+      let snap;
+      try {
+        snap = await getDocFromServer(docRef);
+      } catch {
+        snap = await getDoc(docRef);
+      }
       if (snap.exists()) {
         const remoteData = snap.data() as AppDatabase;
         if (remoteData && Array.isArray(remoteData.students) && Array.isArray(remoteData.users)) {
@@ -493,16 +552,17 @@ class DatabaseService {
             settings: { ...INITIAL_SETTINGS, ...(remoteData.settings || {}) },
           };
           this.persistToLocalStorage(this.db);
-          this.syncStatus = 'connected';
+          this.setSyncStatus('connected');
           this.listeners.forEach((fn) => fn());
           return true;
         }
       } else {
-        await this.pushToCloud(this.db);
-        return true;
+        const res = await this.pushToCloud(this.db);
+        return res.ok;
       }
     } catch (e) {
       console.warn('Manual sync failed:', e);
+      this.setSyncStatus('offline');
     }
     return false;
   }
@@ -541,6 +601,28 @@ class DatabaseService {
   // --- SETTINGS ---
   public updateSettings(partial: Partial<SchoolSettings>) {
     this.db.settings = { ...this.db.settings, ...partial };
+    this.notify();
+  }
+
+  public updateAcademicPeriod(
+    academicYear: string,
+    semester: 'Ganjil' | 'Genap',
+    applyToClasses = true
+  ) {
+    const cleanYear = academicYear.trim();
+    if (!cleanYear) return;
+    this.db.settings = {
+      ...this.db.settings,
+      academicYear: cleanYear,
+      semester,
+    };
+    if (applyToClasses) {
+      this.db.classes = this.db.classes.map((cls) => ({
+        ...cls,
+        academicYear: cleanYear,
+        semester,
+      }));
+    }
     this.notify();
   }
 
@@ -591,9 +673,9 @@ class DatabaseService {
   }
 
   public checkUsernameAvailable(username: string, excludeUserId?: string): boolean {
-    const clean = username.trim().toLowerCase();
+    const clean = normalizeUsername(username);
     return !this.db.users.some(
-      (u) => u.username.toLowerCase() === clean && u.id !== excludeUserId
+      (u) => normalizeUsername(u.username) === clean && u.id !== excludeUserId
     );
   }
 
@@ -627,10 +709,11 @@ class DatabaseService {
     const initialLen = this.db.students.length;
     this.db.students = this.db.students.filter((s) => s.id !== id);
     if (this.db.students.length !== initialLen) {
-      // Also unbind any wali murid account for this student
+      // Unbind any wali murid account cleanly without leaving `undefined` keys (Firestore rejects undefined!)
       this.db.users = this.db.users.map((u) => {
         if (u.linkedStudentId === id) {
-          return { ...u, linkedStudentId: undefined };
+          const { linkedStudentId: _removed, ...rest } = u;
+          return rest;
         }
         return u;
       });

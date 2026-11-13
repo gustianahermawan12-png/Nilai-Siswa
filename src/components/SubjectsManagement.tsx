@@ -39,8 +39,8 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
   const [editingClass, setEditingClass] = useState<ClassGroup | null>(null);
   const [className, setClassName] = useState('');
   const [homeroomTeacher, setHomeroomTeacher] = useState('');
-  const [academicYear, setAcademicYear] = useState('2024/2025');
-  const [semester, setSemester] = useState<'Ganjil' | 'Genap'>('Ganjil');
+  const [academicYear, setAcademicYear] = useState(db.settings.academicYear || '2024/2025');
+  const [semester, setSemester] = useState<'Ganjil' | 'Genap'>(db.settings.semester || 'Ganjil');
 
   // Deletion modals
   const [subjToDelete, setSubjToDelete] = useState<Subject | null>(null);
@@ -72,7 +72,7 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
     setIsSubjModalOpen(true);
   };
 
-  const handleSaveSubj = (e: React.FormEvent) => {
+  const handleSaveSubj = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subjName.trim() || !subjCode.trim()) {
       showToast('Kode dan nama mata pelajaran wajib diisi!');
@@ -87,6 +87,7 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
         teacherName: subjTeacher.trim(),
         kkm: Number(subjKkm) || 75,
       });
+      await dbService.saveAndSyncNow();
       showToast('Mata pelajaran berhasil diperbarui.');
     } else {
       dbService.addSubject({
@@ -96,16 +97,18 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
         teacherName: subjTeacher.trim(),
         kkm: Number(subjKkm) || 75,
       });
+      await dbService.saveAndSyncNow();
       showToast('Mata pelajaran baru berhasil ditambahkan.');
     }
 
     setIsSubjModalOpen(false);
   };
 
-  const handleDeleteSubjConfirm = () => {
+  const handleDeleteSubjConfirm = async () => {
     if (!subjToDelete) return;
     const success = dbService.deleteSubject(subjToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast('Mata pelajaran berhasil dihapus.');
     }
     setSubjToDelete(null);
@@ -116,8 +119,8 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
     setEditingClass(null);
     setClassName(`Kelas ${classes.length + 1}`);
     setHomeroomTeacher('Gustiana Hermawan, S.Pd.');
-    setAcademicYear('2024/2025');
-    setSemester('Ganjil');
+    setAcademicYear(db.settings.academicYear || '2024/2025');
+    setSemester(db.settings.semester || 'Ganjil');
     setIsClassModalOpen(true);
   };
 
@@ -130,7 +133,7 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
     setIsClassModalOpen(true);
   };
 
-  const handleSaveClass = (e: React.FormEvent) => {
+  const handleSaveClass = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!className.trim()) return;
 
@@ -141,6 +144,7 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
         academicYear,
         semester,
       });
+      await dbService.saveAndSyncNow();
       showToast('Data kelas berhasil diperbarui.');
     } else {
       dbService.addClass({
@@ -149,16 +153,18 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
         academicYear,
         semester,
       });
+      await dbService.saveAndSyncNow();
       showToast('Kelas baru berhasil ditambahkan.');
     }
 
     setIsClassModalOpen(false);
   };
 
-  const handleDeleteClassConfirm = () => {
+  const handleDeleteClassConfirm = async () => {
     if (!classToDelete) return;
     const success = dbService.deleteClass(classToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast('Kelas berhasil dihapus.');
     }
     setClassToDelete(null);
@@ -366,114 +372,121 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
 
       {/* Modal Add / Edit Subject */}
       {isSubjModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-amber-300" />
-                <span>{editingSubj ? 'Edit Mata Pelajaran' : 'Tambah Mata Pelajaran'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsSubjModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <BookOpen className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">{editingSubj ? 'Edit Mata Pelajaran' : 'Tambah Mata Pelajaran'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsSubjModalOpen(false)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveSubj} className="p-6 space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-1">
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Kode <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={subjCode}
-                    onChange={(e) => setSubjCode(e.target.value)}
-                    placeholder="QH"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono font-bold"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Nama Mapel <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={subjName}
-                    onChange={(e) => setSubjName(e.target.value)}
-                    placeholder="Al-Qur'an Hadits"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Guru Pengampu
-                </label>
-                <input
-                  type="text"
-                  value={subjTeacher}
-                  onChange={(e) => setSubjTeacher(e.target.value)}
-                  placeholder="Ustadz / Ustadzah..."
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Batas KKM <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min={50}
-                    max={100}
-                    required
-                    value={subjKkm}
-                    onChange={(e) => setSubjKkm(Number(e.target.value))}
-                    className="w-full px-3 py-2 text-sm font-black border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
-                  />
-                  <p className="text-[10px] text-gray-500 mt-0.5">Nilai &ge; KKM otomatis Tuntas</p>
+            <form onSubmit={handleSaveSubj} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Kode <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={subjCode}
+                      onChange={(e) => setSubjCode(e.target.value)}
+                      placeholder="QH"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none uppercase font-mono font-bold"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Nama Mapel <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={subjName}
+                      onChange={(e) => setSubjName(e.target.value)}
+                      placeholder="Al-Qur'an Hadits"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
+                    />
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Terapkan pada Kelas
+                    Guru Pengampu
                   </label>
-                  <select
-                    value={subjClassId}
-                    onChange={(e) => setSubjClassId(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    <option value="semua">Semua Kelas</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    value={subjTeacher}
+                    onChange={(e) => setSubjTeacher(e.target.value)}
+                    placeholder="Ustadz / Ustadzah..."
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Batas KKM <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min={50}
+                      max={100}
+                      required
+                      value={subjKkm}
+                      onChange={(e) => setSubjKkm(Number(e.target.value))}
+                      className="w-full px-3 py-2 text-sm font-black border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    />
+                    <p className="text-[10px] text-gray-500 mt-0.5">Nilai &ge; KKM otomatis Tuntas</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Terapkan pada Kelas
+                    </label>
+                    <select
+                      value={subjClassId}
+                      onChange={(e) => setSubjClassId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      <option value="semua">Semua Kelas</option>
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsSubjModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-amber-300" />
                   <span>Simpan Mapel</span>
                 </button>
               </div>
@@ -484,116 +497,123 @@ export const SubjectsManagement: React.FC<SubjectsManagementProps> = ({ currentU
 
       {/* Modal Add / Edit Class */}
       {isClassModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <School className="w-5 h-5 text-amber-300" />
-                <span>{editingClass ? 'Edit Rombongan Belajar' : 'Tambah Kelas Baru'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsClassModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <School className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">{editingClass ? 'Edit Rombongan Belajar' : 'Tambah Kelas Baru'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsClassModalOpen(false)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveClass} className="p-6 space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Nama Kelas <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={className}
-                  onChange={(e) => setClassName(e.target.value)}
-                  placeholder="Contoh: Kelas 1C / Kelas 4"
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Nama Wali Kelas <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={homeroomTeacher}
-                  onChange={(e) => setHomeroomTeacher(e.target.value)}
-                  placeholder="Nama Ustadz / Ustadzah"
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {[
-                    'Gustiana Hermawan, S.Pd.',
-                    'Nurhayati, S.Pd.I',
-                    'Ahmad Fauzi, S.Pd.',
-                    'Siti Maryam, S.Pd.I',
-                    'Ustadz Hasan Basri, S.Pd.I',
-                  ].map((t) => (
-                    <button
-                      key={t}
-                      type="button"
-                      onClick={() => setHomeroomTeacher(t)}
-                      className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
-                        homeroomTeacher === t
-                          ? 'bg-emerald-700 text-white font-bold'
-                          : 'bg-gray-100 text-gray-700 hover:bg-emerald-100'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveClass} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Tahun Pelajaran
+                    Nama Kelas <span className="text-red-500">*</span>
                   </label>
                   <input
                     type="text"
                     required
-                    value={academicYear}
-                    onChange={(e) => setAcademicYear(e.target.value)}
-                    placeholder="2024/2025"
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    value={className}
+                    onChange={(e) => setClassName(e.target.value)}
+                    placeholder="Contoh: Kelas 1C / Kelas 4"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-bold"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Semester
+                    Nama Wali Kelas <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    value={semester}
-                    onChange={(e) => setSemester(e.target.value as 'Ganjil' | 'Genap')}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    <option value="Ganjil">Ganjil</option>
-                    <option value="Genap">Genap</option>
-                  </select>
+                  <input
+                    type="text"
+                    required
+                    value={homeroomTeacher}
+                    onChange={(e) => setHomeroomTeacher(e.target.value)}
+                    placeholder="Nama Ustadz / Ustadzah"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                  />
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {[
+                      'Gustiana Hermawan, S.Pd.',
+                      'Nurhayati, S.Pd.I',
+                      'Ahmad Fauzi, S.Pd.',
+                      'Siti Maryam, S.Pd.I',
+                      'Ustadz Hasan Basri, S.Pd.I',
+                    ].map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setHomeroomTeacher(t)}
+                        className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                          homeroomTeacher === t
+                            ? 'bg-emerald-700 text-white font-bold'
+                            : 'bg-gray-100 text-gray-700 hover:bg-emerald-100'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Tahun Pelajaran
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={academicYear}
+                      onChange={(e) => setAcademicYear(e.target.value)}
+                      placeholder="2024/2025"
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Semester
+                    </label>
+                    <select
+                      value={semester}
+                      onChange={(e) => setSemester(e.target.value as 'Ganjil' | 'Genap')}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      <option value="Ganjil">Ganjil</option>
+                      <option value="Genap">Genap</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsClassModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-amber-300" />
                   <span>Simpan Kelas</span>
                 </button>
               </div>

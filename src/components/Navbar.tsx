@@ -44,7 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-emerald-800 text-white shadow-md border-b-4 border-amber-400">
+      <header className="sticky top-0 z-30 bg-emerald-800 text-white shadow-md border-b-4 border-amber-400 print:hidden">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16 sm:h-20">
             {/* Left Brand Identity */}
@@ -127,12 +127,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   type="button"
                   onClick={onOpenGoogleWorkspace}
-                  className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-400 hover:bg-amber-300 text-emerald-950 transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-white"
-                  title="Ekspor ke Google Sheets & Cadangan Google Drive"
+                  className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-400 hover:bg-amber-300 text-emerald-950 transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-white cursor-pointer"
+                  title="Simpan ke Google Drive, Ekspor Sheets & Link Siap Share"
                 >
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-900" />
-                  <Cloud className="w-3.5 h-3.5 text-emerald-900" />
-                  <span>Google Sheets & Drive</span>
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-900 hidden sm:inline" />
+                  <Cloud className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-emerald-900" />
+                  <span className="hidden sm:inline">Google Sheets & Drive</span>
+                  <span className="sm:hidden font-bold text-[11px]">Drive</span>
                 </button>
               )}
 

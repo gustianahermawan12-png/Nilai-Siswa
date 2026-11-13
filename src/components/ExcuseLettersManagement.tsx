@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ExcuseLetter, User, Student } from '../types';
 import { dbService } from '../services/db';
+import { compressImageFile } from '../utils/imageHelper';
 import {
   Mail,
   Send,
@@ -9,11 +10,8 @@ import {
   Clock,
   Camera,
   Check,
-  X,
   FileText,
-  AlertCircle,
   Sparkles,
-  Calendar,
 } from 'lucide-react';
 
 interface ExcuseLettersManagementProps {
@@ -54,20 +52,18 @@ export const ExcuseLettersManagement: React.FC<ExcuseLettersManagementProps> = (
     setTimeout(() => setToastMsg(''), 3500);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setAttachmentUrl(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    try {
+      const compressed = await compressImageFile(file, 640, 0.72);
+      setAttachmentUrl(compressed);
+    } catch {
+      showToast('Gagal memproses foto surat bukti.');
     }
   };
 
-  const handleSubmitLetter = (e: React.FormEvent) => {
+  const handleSubmitLetter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!linkedStudent) {
       showToast('Akun Anda tidak terhubung dengan siswa.');
@@ -91,13 +87,14 @@ export const ExcuseLettersManagement: React.FC<ExcuseLettersManagementProps> = (
       attachmentUrl: attachmentUrl || undefined,
     });
 
+    await dbService.saveAndSyncNow();
     setReason('');
     setAttachmentUrl('');
     setIsSubmitting(false);
     showToast('Surat izin/sakit berhasil dikirim ke pihak madrasah!');
   };
 
-  const handleReviewConfirm = () => {
+  const handleReviewConfirm = async () => {
     if (!selectedLetter) return;
 
     dbService.reviewExcuseLetter(
@@ -106,6 +103,7 @@ export const ExcuseLettersManagement: React.FC<ExcuseLettersManagementProps> = (
       adminNotes.trim() || (adminDecision === 'approved' ? 'Disetujui pihak madrasah' : 'Permohonan ditolak'),
       currentUser.name
     );
+    await dbService.saveAndSyncNow();
 
     if (adminDecision === 'approved') {
       showToast(
@@ -466,23 +464,28 @@ export const ExcuseLettersManagement: React.FC<ExcuseLettersManagementProps> = (
 
       {/* Admin Review Modal */}
       {selectedLetter && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <Mail className="w-5 h-5 text-amber-300" />
-                <span>Verifikasi Surat Izin / Sakit</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelectedLetter(null);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <Mail className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">Verifikasi Surat Izin / Sakit</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setSelectedLetter(null)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
               <div className="bg-emerald-50 p-3.5 rounded-2xl border border-emerald-200 text-xs">
                 <p className="font-bold text-emerald-950 text-sm">{selectedLetter.studentName}</p>
                 <p className="text-emerald-800 mt-0.5">
@@ -561,28 +564,28 @@ export const ExcuseLettersManagement: React.FC<ExcuseLettersManagementProps> = (
                   className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                 />
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
-                <button
-                  type="button"
-                  onClick={() => setSelectedLetter(null)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleReviewConfirm}
-                  className={`px-5 py-2 text-xs font-bold text-white rounded-xl transition-colors shadow flex items-center gap-1.5 ${
-                    adminDecision === 'approved'
-                      ? 'bg-green-700 hover:bg-green-800'
-                      : 'bg-red-600 hover:bg-red-700'
-                  }`}
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Konfirmasi Keputusan</span>
-                </button>
-              </div>
+            <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedLetter(null)}
+                className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
+              >
+                Tutup (Batal)
+              </button>
+              <button
+                type="button"
+                onClick={handleReviewConfirm}
+                className={`px-5 py-2 text-xs font-bold text-white rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer ${
+                  adminDecision === 'approved'
+                    ? 'bg-green-700 hover:bg-green-800'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                <Check className="w-4 h-4" />
+                <span>Konfirmasi Keputusan</span>
+              </button>
             </div>
           </div>
         </div>

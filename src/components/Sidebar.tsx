@@ -1,5 +1,6 @@
 import React from 'react';
-import { User, ExcuseLetter } from '../types';
+import { User } from '../types';
+import { dbService } from '../services/db';
 import {
   LayoutDashboard,
   Users,
@@ -65,6 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const isAdmin = currentUser.role === 'admin';
+  const { settings } = dbService.getSnapshot();
 
   const adminMenu: MenuItem[] = [
     { key: 'dashboard' as TabKey, label: 'Dasbor Utama', icon: LayoutDashboard },
@@ -186,8 +188,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Bottom Info */}
       <div className="p-3 bg-emerald-950/80 border-t border-emerald-800/80 text-center">
-        <p className="text-[10px] text-emerald-300 font-medium">TP 2024/2025 &bull; Semester Ganjil</p>
-        <p className="text-[9px] text-emerald-400/80">MI Nurul Falah Bandung</p>
+        <p className="text-[10px] text-emerald-300 font-medium">
+          TP {settings.academicYear} &bull; Semester {settings.semester}
+        </p>
+        <p className="text-[9px] text-emerald-400/80">MI Nurul Falah</p>
       </div>
     </div>
   );
@@ -195,13 +199,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:block w-64 shrink-0 h-[calc(100vh-5rem)] sticky top-20 shadow-lg border-r border-emerald-800">
+      <aside className="hidden lg:block w-64 shrink-0 h-[calc(100vh-5rem)] sticky top-20 shadow-lg border-r border-emerald-800 print:hidden">
         {content}
       </aside>
 
       {/* Mobile drawer overlay */}
       {isOpenMobile && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div className="fixed inset-0 z-50 flex lg:hidden print:hidden">
           <div
             className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
             onClick={onCloseMobile}

@@ -81,7 +81,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({ currentU
     setIsModalOpen(true);
   };
 
-  const handleSaveSchedule = (e: React.FormEvent) => {
+  const handleSaveSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!startTime || !endTime) {
       showToast('Waktu masuk dan waktu pulang/selesai wajib diisi!');
@@ -98,6 +98,7 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({ currentU
         teacherName: teacherName.trim(),
         room: room.trim(),
       });
+      await dbService.saveAndSyncNow();
       showToast('Jadwal pelajaran berhasil diperbarui.');
     } else {
       dbService.addSchedule({
@@ -109,16 +110,18 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({ currentU
         teacherName: teacherName.trim(),
         room: room.trim(),
       });
+      await dbService.saveAndSyncNow();
       showToast('Jadwal pelajaran baru berhasil ditambahkan.');
     }
 
     setIsModalOpen(false);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!itemToDelete) return;
     const success = dbService.deleteSchedule(itemToDelete.id);
     if (success) {
+      await dbService.saveAndSyncNow();
       showToast('Jadwal pelajaran berhasil dihapus.');
     }
     setItemToDelete(null);
@@ -327,36 +330,109 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({ currentU
 
       {/* Modal Add / Edit Schedule */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95">
-            <div className="px-6 py-4 bg-emerald-800 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base flex items-center gap-2">
-                <CalendarDays className="w-5 h-5 text-amber-300" />
-                <span>{editingItem ? 'Edit Jadwal Pelajaran' : 'Tambah Jadwal Pelajaran'}</span>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border-t-4 border-emerald-700 animate-in fade-in zoom-in-95 max-h-[calc(100dvh-1rem)] sm:max-h-[88dvh] flex flex-col my-auto">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-emerald-800 text-white flex items-center justify-between gap-2 shrink-0">
+              <h3 className="font-bold text-sm sm:text-base flex items-center gap-2 min-w-0">
+                <CalendarDays className="w-5 h-5 text-amber-300 shrink-0" />
+                <span className="truncate">{editingItem ? 'Edit Jadwal Pelajaran' : 'Tambah Jadwal Pelajaran'}</span>
               </h3>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-emerald-200 hover:text-white text-lg font-bold"
+                className="shrink-0 px-2.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                &times;
+                &times; Tutup
               </button>
             </div>
 
-            <form onSubmit={handleSaveSchedule} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSaveSchedule} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 overscroll-contain touch-pan-y">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Kelas <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={classId}
+                      onChange={(e) => setClassId(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                      Hari <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={day}
+                      onChange={(e) => setDay(e.target.value as ScheduleItem['day'])}
+                      className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
+                    >
+                      {days.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Time in and Time out */}
+                <div className="grid grid-cols-2 gap-3 p-3 bg-amber-50 rounded-2xl border border-amber-200">
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-950 uppercase mb-1">
+                      Waktu Jam Masuk <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-950 uppercase mb-1">
+                      Waktu Jam Pulang / Selesai <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-bold"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Kelas <span className="text-red-500">*</span>
+                    Mata Pelajaran <span className="text-red-500">*</span>
                   </label>
                   <select
-                    value={classId}
-                    onChange={(e) => setClassId(e.target.value)}
+                    value={subjectId}
+                    onChange={(e) => {
+                      setSubjectId(e.target.value);
+                      const s = subjects.find((subj) => subj.id === e.target.value);
+                      if (s) setTeacherName(s.teacherName);
+                    }}
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
                   >
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
+                    {subjects.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.code}) - Pengampu: {s.teacherName}
                       </option>
                     ))}
                   </select>
@@ -364,110 +440,44 @@ export const ScheduleManagement: React.FC<ScheduleManagementProps> = ({ currentU
 
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                    Hari <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={day}
-                    onChange={(e) => setDay(e.target.value as ScheduleItem['day'])}
-                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                  >
-                    {days.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Time in and Time out */}
-              <div className="grid grid-cols-2 gap-3 p-3 bg-amber-50 rounded-2xl border border-amber-200">
-                <div>
-                  <label className="block text-[11px] font-bold text-amber-950 uppercase mb-1">
-                    Waktu Jam Masuk <span className="text-red-500">*</span>
+                    Nama Guru Pengampu
                   </label>
                   <input
-                    type="time"
-                    required
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-bold"
+                    type="text"
+                    value={teacherName}
+                    onChange={(e) => setTeacherName(e.target.value)}
+                    placeholder="Ustadz / Ustadzah..."
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-[11px] font-bold text-amber-950 uppercase mb-1">
-                    Waktu Jam Pulang / Selesai <span className="text-red-500">*</span>
+                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                    Ruang Kelas / Lokasi
                   </label>
                   <input
-                    type="time"
-                    required
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full px-3 py-2 text-xs border border-amber-300 rounded-xl bg-white focus:ring-2 focus:ring-amber-500 outline-none font-bold"
+                    type="text"
+                    value={room}
+                    onChange={(e) => setRoom(e.target.value)}
+                    placeholder="Ruang 1A / Lapangan / Lab"
+                    className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Mata Pelajaran <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={subjectId}
-                  onChange={(e) => {
-                    setSubjectId(e.target.value);
-                    const s = subjects.find((subj) => subj.id === e.target.value);
-                    if (s) setTeacherName(s.teacherName);
-                  }}
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-medium"
-                >
-                  {subjects.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.code}) - Pengampu: {s.teacherName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Nama Guru Pengampu
-                </label>
-                <input
-                  type="text"
-                  value={teacherName}
-                  onChange={(e) => setTeacherName(e.target.value)}
-                  placeholder="Ustadz / Ustadzah..."
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-                  Ruang Kelas / Lokasi
-                </label>
-                <input
-                  type="text"
-                  value={room}
-                  onChange={(e) => setRoom(e.target.value)}
-                  placeholder="Ruang 1A / Lapangan / Lab"
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <div className="shrink-0 p-3 sm:p-4 bg-gray-50 border-t border-gray-200 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                  className="px-4 py-2 text-xs font-semibold text-gray-700 bg-white hover:bg-gray-100 border border-gray-300 rounded-xl transition-colors cursor-pointer"
                 >
-                  Batal
+                  Tutup (Batal)
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5"
+                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl transition-colors shadow flex items-center gap-1.5 cursor-pointer border-b-2 border-emerald-950"
                 >
-                  <Check className="w-4 h-4" />
+                  <Check className="w-4 h-4 text-amber-300" />
                   <span>{editingItem ? 'Simpan Perubahan' : 'Simpan Jadwal'}</span>
                 </button>
               </div>
